@@ -41,7 +41,15 @@ func main() {
 		log.Fatalf("unable to read prompt due to err - %s", err)
 	}
 
-	agent := agents.NewOneShotAgent(llm, []tools.Tool{}, agents.WithMaxIterations(3))
+	agent, err := agents.Initialize(
+		llm,
+		[]tools.Tool{},
+		agents.ZeroShotReactDescription,
+		agents.WithMaxIterations(3),
+	)
+	if err != nil {
+		log.Fatalf("unable to initialize agent: %v", err)
+	}
 	executor := agents.NewExecutor(agent)
 	answer, err := chains.Run(ctx, executor, string(prompt))
 	if err != nil {
