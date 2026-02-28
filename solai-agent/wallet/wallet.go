@@ -1,6 +1,8 @@
 package wallet
 
 import (
+	"crypto/ed25519"
+
 	"github.com/tyler-smith/go-bip39"
 )
 
@@ -20,8 +22,15 @@ func seedFromPhrase(phrase string) []byte {
 	return bip39.NewSeed(phrase, "")
 }
 
-// AI! populate this function to return a Ed25519 keypair from the passed seed
-func createWalletFromSeed(seed []byte) {}
+func createWalletFromSeed(seed []byte) (ed25519.PrivateKey, ed25519.PublicKey) {
+	// Ed25519 requires a 32-byte seed. If we have more (like 64 bytes from BIP-39),
+	// we use the first 32 bytes.
+	if len(seed) > 32 {
+		seed = seed[:32]
+	}
+	privateKey := ed25519.NewKeyFromSeed(seed)
+	return privateKey, privateKey.Public().(ed25519.PublicKey)
+}
 
 func SignTransaction() {}
 
