@@ -4,7 +4,9 @@ go 1.25.7
 
 require (
 	github.com/joho/godotenv v1.5.1
+	github.com/mr-tron/base58 v1.2.0
 	github.com/tmc/langchaingo v0.1.14
+	github.com/tyler-smith/go-bip39 v1.1.0
 )
 
 require (
@@ -42,7 +44,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pkoukk/tiktoken-go v0.1.6 // indirect
-	github.com/shopspring/decimal v1.2.0 // indirect
+	github.com/shopspring/decimal v1.3.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/cast v1.3.1 // indirect
 	github.com/yargevad/filepathx v1.0.0 // indirect

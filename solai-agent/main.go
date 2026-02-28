@@ -2,16 +2,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"os"
 
 	_ "github.com/joho/godotenv/autoload"
-	"github.com/tmc/langchaingo/agents"
-	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms/googleai"
-	"github.com/tmc/langchaingo/tools"
 )
 
 func main() {
@@ -40,21 +36,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("unable to read prompt due to err - %s", err)
 	}
-
-	agent, err := agents.Initialize(
-		llm,
-		[]tools.Tool{},
-		agents.ZeroShotReactDescription,
-		agents.WithMaxIterations(3),
-	)
-	if err != nil {
-		log.Fatalf("unable to initialize agent: %v", err)
+	config := agentConfig{
+		model:        llm,
+		systemPrompt: prompt,
 	}
-	executor := agents.NewExecutor(agent)
-	answer, err := chains.Run(ctx, executor, string(prompt))
-	if err != nil {
-		log.Print(err)
-	}
-
-	fmt.Print(answer)
+	run(ctx, config)
 }
