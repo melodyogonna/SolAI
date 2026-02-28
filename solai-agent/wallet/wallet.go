@@ -4,6 +4,7 @@ import (
 	"github.com/tyler-smith/go-bip39"
 )
 
+// AI! write a test for this
 func generateSeedPhrase() (string, error) {
 	entropy, err := bip39.NewEntropy(256)
 	if err != nil {
@@ -16,7 +17,7 @@ func generateSeedPhrase() (string, error) {
 	return mnemonic, nil
 }
 
-func seedFromPhrase(phrase string) ([]byte, error) {
+func seedFromPhrase(phrase string) []byte {
 	return bip39.NewSeed(phrase, "")
 }
 
