@@ -20,7 +20,8 @@ func seedFromPhrase(phrase string) []byte {
 	return bip39.NewSeed(phrase, "")
 }
 
-func CreateWallet() {}
+// AI! populate this function to return a Ed25519 keypair from the passed seed
+func createWalletFromSeed(seed []byte) {}
 
 func SignTransaction() {}
 
