@@ -7,6 +7,7 @@ import (
 	"os"
 
 	_ "github.com/joho/godotenv/autoload"
+	"github.com/melodyogonna/solai/solai-agent/wallet"
 	"github.com/tmc/langchaingo/llms/googleai"
 )
 
@@ -36,9 +37,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("unable to read prompt due to err - %s", err)
 	}
+	wallet, err := wallet.CreateWallet("")
+	if err != nil {
+		log.Fatal(err)
+	}
 	config := agentConfig{
 		model:        llm,
 		systemPrompt: prompt,
+		wallet:       &wallet,
 	}
 	run(ctx, config)
 }
