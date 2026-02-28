@@ -27,12 +27,15 @@ func TestSeedFromPhrase(t *testing.T) {
 		t.Fatalf("Failed to generate phrase: %v", err)
 	}
 
-	seed := seedFromPhrase(phrase)
+	seed, err := seedFromPhrase(phrase)
+	if err != nil {
+		t.Fatalf("Failed to get seed from phrase: %v", err)
+	}
 	if seed == nil {
 		t.Error("Expected non-nil seed")
 	}
 
-	if len(seed) != 64 { // BIP-39 seeds are 512 bits (64 bytes)
-		t.Errorf("Expected seed length 64, got %d", len(seed))
+	if len(seed) != 32 {
+		t.Errorf("Expected seed length 32, got %d", len(seed))
 	}
 }
