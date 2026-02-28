@@ -1,7 +1,20 @@
 package wallet
 
-// AI! make this function generate a BIP-39 seed phrase for use with solana wallets
-func generateSeedPhrase() {}
+import (
+	"github.com/tyler-smith/go-bip39"
+)
+
+func generateSeedPhrase() (string, error) {
+	entropy, err := bip39.NewEntropy(256)
+	if err != nil {
+		return "", err
+	}
+	mnemonic, err := bip39.NewMnemonic(entropy)
+	if err != nil {
+		return "", err
+	}
+	return mnemonic, nil
+}
 
 func CreateWallet() {}
 
