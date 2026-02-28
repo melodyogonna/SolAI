@@ -4,7 +4,6 @@ import (
 	"github.com/tyler-smith/go-bip39"
 )
 
-// AI! write a test for this
 func generateSeedPhrase() (string, error) {
 	entropy, err := bip39.NewEntropy(256)
 	if err != nil {
