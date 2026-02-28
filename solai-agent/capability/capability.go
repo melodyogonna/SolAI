@@ -14,7 +14,15 @@ func (m capabilityManager) GetSystemCapabilities() []Capability {
 	return m.enabledCapabilities
 }
 
-// AI! make this setup function take a config with enabled capabilities. I think it should be a slice of strings, then we can match each string to a function and add them to capability manager
-func SetUp() *capabilityManager {
+func SetUp(enabledCapabilities []string) *capabilityManager {
 	cm := &capabilityManager{}
+
+	for _, capName := range enabledCapabilities {
+		switch capName {
+		// case "some_capability":
+		// 	cm.enabledCapabilities = append(cm.enabledCapabilities, NewSomeCapability())
+		}
+	}
+
+	return cm
 }
