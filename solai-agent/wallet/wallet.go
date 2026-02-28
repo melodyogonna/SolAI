@@ -29,7 +29,6 @@ func createWalletFromSeed(seed []byte) (ed25519.PrivateKey, ed25519.PublicKey) {
 	return privateKey, privateKey.Public().(ed25519.PublicKey)
 }
 
-// AI! generate table test case for this
 func CreateWallet(phrase string) (SolKeyPair, error) {
 	if phrase != "" {
 		seed, err := seedFromPhrase(phrase)
