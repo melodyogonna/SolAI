@@ -16,6 +16,9 @@ func generateSeedPhrase() (string, error) {
 	return mnemonic, nil
 }
 
+// AI! populate this function to take a phrase and seed by passing the phrase through PBKDF2 derivation function
+func seedFromPhrase(phrase string) {}
+
 func CreateWallet() {}
 
 func SignTransaction() {}
