@@ -3,6 +3,7 @@ package wallet
 import (
 	"crypto/ed25519"
 	"fmt"
+	"log/slog"
 
 	"github.com/tyler-smith/go-bip39"
 )
@@ -28,24 +29,39 @@ func createWalletFromSeed(seed []byte) (ed25519.PrivateKey, ed25519.PublicKey) {
 	return privateKey, privateKey.Public().(ed25519.PublicKey)
 }
 
-func CreateWallet(seed []byte) (SolKeyPair, error) {
-	if seed != nil {
+// AI! generate table test case for this
+func CreateWallet(phrase string) (SolKeyPair, error) {
+	if phrase != "" {
+		seed, err := seedFromPhrase(phrase)
+		if err != nil {
+			return SolKeyPair{}, fmt.Errorf("unable to generate seed from phrase %w", err)
+		}
 		prv, pub := createWalletFromSeed(seed)
 		return SolKeyPair{privateKey: prv, publicKey: pub}, nil
 	}
+
+	slog.Warn("No seed was passed to create wallet, generating a new wallet..")
 
 	mnemonic, err := generateSeedPhrase()
 	if err != nil {
 		return SolKeyPair{}, fmt.Errorf("unable to generate key phrase %w", err)
 	}
 
-	seed, err = seedFromPhrase(mnemonic)
+	seed, err := seedFromPhrase(mnemonic)
 	if err != nil {
 		return SolKeyPair{}, fmt.Errorf("unable to generate seed from phrase %w", err)
 	}
 
 	prv, pub := createWalletFromSeed(seed)
-	return SolKeyPair{privateKey: prv, publicKey: pub}, nil
+
+	wallet := SolKeyPair{privateKey: prv, publicKey: pub}
+
+	slog.Info("generated wallet with: %s", wallet.Base58PubKey())
+
+	fmt.Print("---- Please store the following seed phrase securely and pass it in the next time SolAI is started --- \n\n")
+	fmt.Printf("%s", mnemonic)
+
+	return wallet, nil
 }
 
 func SignTransaction() {}
