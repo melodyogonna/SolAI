@@ -55,7 +55,7 @@ func CreateWallet(phrase string) (SolKeyPair, error) {
 
 	wallet := SolKeyPair{privateKey: prv, publicKey: pub}
 
-	slog.Info("generated wallet with: %s", wallet.Base58PubKey())
+	slog.Info("generated wallet", "publicKey", wallet.Base58PubKey())
 
 	fmt.Print("---- Please store the following seed phrase securely and pass it in the next time SolAI is started --- \n\n")
 	fmt.Printf("%s", mnemonic)
