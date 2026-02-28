@@ -1,5 +1,4 @@
 package wallet
-package wallet
 
 import (
 	"strings"

@@ -16,6 +16,7 @@ func generateSeedPhrase() (string, error) {
 	return mnemonic, nil
 }
 
+// AI! add a test for this
 func seedFromPhrase(phrase string) []byte {
 	return bip39.NewSeed(phrase, "")
 }
