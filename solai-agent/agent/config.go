@@ -6,8 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/melodyogonna/solai/solai-agent/capability"
+	"github.com/melodyogonna/solai/solai-agent/tool"
 	"github.com/melodyogonna/solai/solai-agent/wallet"
 	"github.com/tmc/langchaingo/llms"
+	lctools "github.com/tmc/langchaingo/tools"
 )
 
 // Config holds all runtime configuration for the agent.
@@ -32,6 +35,12 @@ type Config struct {
 
 	// CycleInterval is how long the agent sleeps between autonomous cycles.
 	CycleInterval time.Duration
+
+	// LLMProvider manages API credentials for LLM providers used by agentic tools.
+	LLMProvider *capability.LLMProvider
+
+	// SystemManager owns tool loading, LLM provider logging, and cleanup job scheduling.
+	SystemManager *capability.SystemManager
 }
 
 // LoadConfig reads all configuration from environment variables.
@@ -79,12 +88,20 @@ func LoadConfig() (Config, error) {
 
 	cycleInterval := parseDuration(os.Getenv("CYCLE_INTERVAL"), 5*time.Minute)
 
+	llmProvider := capability.NewLLMProvider()
+	loader := func() ([]lctools.Tool, []error, error) {
+		return tool.LoadTools(toolsDir, llmProvider)
+	}
+	systemManager := capability.NewSystemManager(loader, llmProvider)
+
 	return Config{
 		SystemPrompt:  systemPrompt,
 		UserGoals:     userGoals,
 		ToolsDir:      toolsDir,
 		Wallet:        &kp,
 		CycleInterval: cycleInterval,
+		LLMProvider:   llmProvider,
+		SystemManager: systemManager,
 	}, nil
 }
 

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/melodyogonna/solai/solai-agent/capability"
-	"github.com/melodyogonna/solai/solai-agent/tool"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
 	lctools "github.com/tmc/langchaingo/tools"
@@ -20,14 +19,17 @@ import (
 // On startup it loads agentic tools from cfg.ToolsDir, then enters a loop where
 // each iteration runs a full ReAct cycle using the configured LLM and tools.
 func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManager) {
-	agentTools, warnings, err := tool.LoadTools(cfg.ToolsDir)
+	warnings, err := cfg.SystemManager.Setup()
 	if err != nil {
-		slog.Error("cannot read tools directory, agent cannot start", "dir", cfg.ToolsDir, "err", err)
+		slog.Error("system manager setup failed", "err", err)
 		return
 	}
 	for _, w := range warnings {
-		slog.Warn("tool load warning", "err", w)
+		slog.Warn("tool setup warning", "err", w)
 	}
+	go cfg.SystemManager.Start(ctx)
+
+	agentTools := cfg.SystemManager.GetTools()
 	if len(agentTools) == 0 {
 		slog.Warn("no agentic tools loaded — agent will report it cannot accomplish goals")
 	} else {

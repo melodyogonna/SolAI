@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -31,9 +32,11 @@ type ToolOutput struct {
 // RunTool spawns the given executable in dir, writes input as JSON to its stdin,
 // waits for the process to finish, and parses ToolOutput from stdout.
 //
+// extraEnv is an optional list of "KEY=VALUE" strings appended to the subprocess
+// environment. Pass nil for no extra variables (the subprocess inherits the parent env).
 // The process is killed if ctx is cancelled or timeout elapses.
 // stderr from the subprocess is captured and included in error messages.
-func RunTool(ctx context.Context, dir, executable string, input ToolInput, timeout time.Duration) (ToolOutput, error) {
+func RunTool(ctx context.Context, dir, executable string, input ToolInput, timeout time.Duration, extraEnv []string) (ToolOutput, error) {
 	inputJSON, err := json.Marshal(input)
 	if err != nil {
 		return ToolOutput{}, fmt.Errorf("marshalling tool input: %w", err)
@@ -45,6 +48,9 @@ func RunTool(ctx context.Context, dir, executable string, input ToolInput, timeo
 	cmd := exec.CommandContext(ctx, executable)
 	cmd.Dir = dir
 	cmd.Stdin = bytes.NewReader(inputJSON)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

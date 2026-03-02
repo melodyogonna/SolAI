@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/melodyogonna/solai/solai-agent/capability"
 )
 
 // DefaultToolTimeout is the maximum time a single tool execution may run.
@@ -16,14 +18,19 @@ type AgenticTool struct {
 	manifest Manifest
 	dir      string
 	timeout  time.Duration
+	// llmCfg holds the resolved LLM credentials to inject when spawning the tool.
+	// Nil for tools that do not declare llm_options in their manifest.
+	llmCfg *capability.LLMConfig
 }
 
-// NewAgenticTool constructs an AgenticTool from a manifest and its directory.
-func NewAgenticTool(manifest Manifest, dir string) *AgenticTool {
+// NewAgenticTool constructs an AgenticTool from a manifest, its directory, and
+// an optional resolved LLM config (nil for tools that do not need an LLM).
+func NewAgenticTool(manifest Manifest, dir string, llmCfg *capability.LLMConfig) *AgenticTool {
 	return &AgenticTool{
 		manifest: manifest,
 		dir:      dir,
 		timeout:  DefaultToolTimeout,
+		llmCfg:   llmCfg,
 	}
 }
 
@@ -51,7 +58,11 @@ func (t *AgenticTool) Description() string {
 func (t *AgenticTool) Call(ctx context.Context, input string) (string, error) {
 	taskInput := parseTaskInput(input)
 
-	output, err := RunTool(ctx, t.dir, t.manifest.Executable, taskInput, t.timeout)
+	var extraEnv []string
+	if t.llmCfg != nil {
+		extraEnv = t.llmCfg.Env()
+	}
+	output, err := RunTool(ctx, t.dir, t.manifest.Executable, taskInput, t.timeout, extraEnv)
 	if err != nil {
 		// Infrastructure failure — the process could not run at all.
 		// Return as both a string (so the LLM can observe it) and a Go error

@@ -6,6 +6,28 @@ import (
 	"os"
 )
 
+// ManifestLLMModel is one entry in a tool's supported model list.
+type ManifestLLMModel struct {
+	// Model is the model name, e.g. "gemini-2.5-pro" or "gpt-4o".
+	Model string `json:"model"`
+
+	// Provider is the lowercase provider name: "google", "openai", or "anthropic".
+	Provider string `json:"provider"`
+}
+
+// LLMOptions declares which LLM models a tool supports.
+// If absent from manifest.json, the tool does not require an LLM and loads
+// regardless of which providers are configured.
+type LLMOptions struct {
+	// Primary is the model name the tool prefers. The LLM provider will try
+	// to supply this model's credentials first.
+	Primary string `json:"primary"`
+
+	// Supported lists all models this tool can work with, in preference order.
+	// The first model whose provider is configured (after checking Primary) is used.
+	Supported []ManifestLLMModel `json:"supported"`
+}
+
 // Manifest represents the contents of a tool's manifest.json file.
 // Every agentic tool directory must contain one.
 type Manifest struct {
@@ -23,6 +45,10 @@ type Manifest struct {
 	// Executable is the path to the binary or script, relative to the manifest
 	// directory. E.g. "./solana-balance" or "./run.sh".
 	Executable string `json:"executable"`
+
+	// LLMOptions declares LLM model preferences for tools that need their own LLM.
+	// Omit this field for tools that do not require an LLM.
+	LLMOptions *LLMOptions `json:"llm_options,omitempty"`
 }
 
 // LoadManifest reads and JSON-decodes the manifest.json at the given file path.
