@@ -1,0 +1,6 @@
+{
+  "name": "token-price",
+  "description": "Fetches current USD prices for Solana tokens from Jupiter. Specify token symbols (SOL, USDC, USDT, JUP, BONK, WIF, RAY, PYTH) or raw mint addresses in your request. Returns price_usd and 24h change % for each token.",
+  "version": "1.0.0",
+  "executable": "./token-price"
+}
