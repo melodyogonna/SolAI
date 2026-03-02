@@ -89,8 +89,8 @@ func LoadConfig() (Config, error) {
 	cycleInterval := parseDuration(os.Getenv("CYCLE_INTERVAL"), 5*time.Minute)
 
 	llmProvider := capability.NewLLMProvider()
-	loader := func() ([]lctools.Tool, []error, error) {
-		return tool.LoadTools(toolsDir, llmProvider)
+	loader := func(bwrapPath string, checker capability.CapabilityChecker) ([]lctools.Tool, []error, error) {
+		return tool.LoadTools(toolsDir, llmProvider, checker, bwrapPath)
 	}
 	systemManager := capability.NewSystemManager(loader, llmProvider)
 

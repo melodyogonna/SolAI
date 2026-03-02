@@ -15,22 +15,27 @@ const DefaultToolTimeout = 30 * time.Second
 // AgenticTool implements langchaingo's tools.Tool interface.
 // Each instance corresponds to one discovered tool directory.
 type AgenticTool struct {
-	manifest Manifest
-	dir      string
-	timeout  time.Duration
+	manifest      Manifest
+	dir           string
+	timeout       time.Duration
 	// llmCfg holds the resolved LLM credentials to inject when spawning the tool.
 	// Nil for tools that do not declare llm_options in their manifest.
-	llmCfg *capability.LLMConfig
+	llmCfg        *capability.LLMConfig
+	// sandboxPolicy is the resolved sandbox isolation policy for this tool,
+	// built from required_capabilities in the manifest at load time.
+	sandboxPolicy SandboxPolicy
 }
 
-// NewAgenticTool constructs an AgenticTool from a manifest, its directory, and
-// an optional resolved LLM config (nil for tools that do not need an LLM).
-func NewAgenticTool(manifest Manifest, dir string, llmCfg *capability.LLMConfig) *AgenticTool {
+// NewAgenticTool constructs an AgenticTool from a manifest, its directory,
+// an optional resolved LLM config (nil for tools that do not need an LLM),
+// and the sandbox policy resolved from the tool's required_capabilities.
+func NewAgenticTool(manifest Manifest, dir string, llmCfg *capability.LLMConfig, policy SandboxPolicy) *AgenticTool {
 	return &AgenticTool{
-		manifest: manifest,
-		dir:      dir,
-		timeout:  DefaultToolTimeout,
-		llmCfg:   llmCfg,
+		manifest:      manifest,
+		dir:           dir,
+		timeout:       DefaultToolTimeout,
+		llmCfg:        llmCfg,
+		sandboxPolicy: policy,
 	}
 }
 
@@ -62,7 +67,7 @@ func (t *AgenticTool) Call(ctx context.Context, input string) (string, error) {
 	if t.llmCfg != nil {
 		extraEnv = t.llmCfg.Env()
 	}
-	output, err := RunTool(ctx, t.dir, t.manifest.Executable, taskInput, t.timeout, extraEnv)
+	output, err := RunTool(ctx, t.dir, t.manifest.Executable, taskInput, t.timeout, extraEnv, t.sandboxPolicy)
 	if err != nil {
 		// Infrastructure failure — the process could not run at all.
 		// Return as both a string (so the LLM can observe it) and a Go error

@@ -19,6 +19,13 @@ func Register(name string, factory Factory) {
 	registry[name] = factory
 }
 
+// CapabilityChecker checks whether Regular capabilities are available.
+// Implemented by CapabilityManager; accepted by the tool loader to validate
+// required_capabilities declarations without creating a circular import.
+type CapabilityChecker interface {
+	IsRegularCapabilityAvailable(name string) bool
+}
+
 // CapabilityManager holds the active set of capabilities for a running agent.
 type CapabilityManager struct {
 	capabilities []Capability
@@ -51,6 +58,18 @@ func (m *CapabilityManager) GetByClass(class CapabilityClass) []Capability {
 // GetAll returns all active capabilities regardless of class.
 func (m *CapabilityManager) GetAll() []Capability {
 	return m.capabilities
+}
+
+// IsRegularCapabilityAvailable reports whether a Regular capability with the
+// given name is currently registered in the manager. Used by the tool loader
+// to validate tool required_capabilities declarations at startup.
+func (m *CapabilityManager) IsRegularCapabilityAvailable(name string) bool {
+	for _, c := range m.capabilities {
+		if c.Class() == Regular && c.Name() == name {
+			return true
+		}
+	}
+	return false
 }
 
 // BuildCapabilityPromptSection generates a Markdown block describing all

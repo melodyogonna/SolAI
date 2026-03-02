@@ -33,7 +33,10 @@ func main() {
 	capability.Register("wallet", func() capability.Capability {
 		return capability.NewWalletCapability(cfg.Wallet)
 	})
-	capManager := capability.SetUp([]string{"wallet"})
+	capability.Register("network-manager", func() capability.Capability {
+		return capability.NewNetworkManagerCapability()
+	})
+	capManager := capability.SetUp([]string{"wallet", "network-manager"})
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()

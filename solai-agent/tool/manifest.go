@@ -49,6 +49,12 @@ type Manifest struct {
 	// LLMOptions declares LLM model preferences for tools that need their own LLM.
 	// Omit this field for tools that do not require an LLM.
 	LLMOptions *LLMOptions `json:"llm_options,omitempty"`
+
+	// RequiredCapabilities lists Regular capabilities this tool needs.
+	// Each entry is a capability name (e.g. "network-manager", "file-manager").
+	// Tools declaring capabilities that are not registered are disabled at load
+	// time with a warning. An absent or empty list means minimal sandbox only.
+	RequiredCapabilities []string `json:"required_capabilities,omitempty"`
 }
 
 // LoadManifest reads and JSON-decodes the manifest.json at the given file path.

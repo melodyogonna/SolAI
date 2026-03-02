@@ -19,11 +19,18 @@ import (
 // and credentials to inject. Tools with no matching configured provider are
 // skipped with a warning rather than causing a fatal error.
 //
+// If a tool declares required_capabilities, checker is consulted for each entry.
+// Missing Regular capabilities cause the tool to be disabled with a warning.
+//
+// bwrapPath is the path to the extracted bwrap binary (empty when sandbox is
+// unavailable). A SandboxPolicy is built for each tool from its declared
+// capabilities and injected so calls run inside bubblewrap.
+//
 // Returns:
 //   - []tools.Tool: successfully loaded tools (may be empty if none found)
 //   - []error: one warning per tool that failed to load or was disabled
 //   - error: fatal only if toolsDir itself cannot be read
-func LoadTools(toolsDir string, provider *capability.LLMProvider) ([]tools.Tool, []error, error) {
+func LoadTools(toolsDir string, provider *capability.LLMProvider, checker capability.CapabilityChecker, bwrapPath string) ([]tools.Tool, []error, error) {
 	entries, err := os.ReadDir(toolsDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading tools directory %s: %w", toolsDir, err)
@@ -73,10 +80,38 @@ func LoadTools(toolsDir string, provider *capability.LLMProvider) ([]tools.Tool,
 			}
 		}
 
-		loaded = append(loaded, NewAgenticTool(manifest, toolDir, llmCfg))
+		// Validate required capabilities and build the sandbox policy.
+		policy, capWarning := buildSandboxPolicy(manifest, checker, bwrapPath)
+		if capWarning != nil {
+			warnings = append(warnings, fmt.Errorf("tool %q disabled: %w", manifest.Name, capWarning))
+			continue
+		}
+
+		loaded = append(loaded, NewAgenticTool(manifest, toolDir, llmCfg, policy))
 	}
 
 	return loaded, warnings, nil
+}
+
+// buildSandboxPolicy resolves the SandboxPolicy for a tool from its manifest.
+// Returns (policy, nil) on success, or (zero, error) if a required capability
+// is declared but not registered — the tool should be disabled in that case.
+func buildSandboxPolicy(manifest Manifest, checker capability.CapabilityChecker, bwrapPath string) (SandboxPolicy, error) {
+	policy := SandboxPolicy{BwrapPath: bwrapPath}
+
+	for _, name := range manifest.RequiredCapabilities {
+		if !checker.IsRegularCapabilityAvailable(name) {
+			return SandboxPolicy{}, fmt.Errorf(
+				"required capability %q is not registered (add it to the agent's capability list)", name)
+		}
+		switch name {
+		case "network-manager":
+			policy.ShareNet = true
+		// "file-manager" support is reserved for future implementation.
+		}
+	}
+
+	return policy, nil
 }
 
 // joinProviders formats a ManifestLLMModel slice as a readable list of

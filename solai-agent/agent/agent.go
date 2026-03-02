@@ -19,7 +19,7 @@ import (
 // On startup it loads agentic tools from cfg.ToolsDir, then enters a loop where
 // each iteration runs a full ReAct cycle using the configured LLM and tools.
 func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManager) {
-	warnings, err := cfg.SystemManager.Setup()
+	warnings, err := cfg.SystemManager.Setup(capManager)
 	if err != nil {
 		slog.Error("system manager setup failed", "err", err)
 		return
