@@ -60,6 +60,19 @@ func NewLLMProvider() *LLMProvider {
 	return &LLMProvider{credentials: creds}
 }
 
+// NewLLMProviderFromMap creates an LLMProvider from an explicit credentials map.
+// Keys are lowercase provider names ("google", "openai", "anthropic").
+// Entries for unknown or empty-valued providers are silently ignored.
+func NewLLMProviderFromMap(creds map[string]string) *LLMProvider {
+	filtered := make(map[string]string)
+	for _, name := range knownProviders {
+		if key, ok := creds[name]; ok && key != "" {
+			filtered[name] = key
+		}
+	}
+	return &LLMProvider{credentials: filtered}
+}
+
 // IsConfigured reports whether the given provider has credentials loaded.
 func (p *LLMProvider) IsConfigured(provider string) bool {
 	_, ok := p.credentials[strings.ToLower(provider)]

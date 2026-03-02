@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/melodyogonna/solai/solai-agent/capability"
+	solaiconfig "github.com/melodyogonna/solai/solai-agent/config"
 	"github.com/melodyogonna/solai/solai-agent/tool"
 	"github.com/melodyogonna/solai/solai-agent/wallet"
 	"github.com/tmc/langchaingo/llms"
@@ -97,6 +98,41 @@ func LoadConfig() (Config, error) {
 	return Config{
 		SystemPrompt:  systemPrompt,
 		UserGoals:     userGoals,
+		ToolsDir:      toolsDir,
+		Wallet:        &kp,
+		CycleInterval: cycleInterval,
+		LLMProvider:   llmProvider,
+		SystemManager: systemManager,
+	}, nil
+}
+
+// LoadConfigFrom builds an agent Config from a SolaiConfig (from ~/.solai/config.json).
+// toolsDir and systemPrompt are injected directly rather than read from env vars,
+// allowing the CLI path to bypass environment variables entirely.
+//
+// Note: LoadConfigFrom does not initialize the LLM or set Config.LLM. The caller
+// is responsible for constructing the LLM with cfg.APIKey and assigning it.
+func LoadConfigFrom(cfg *solaiconfig.SolaiConfig, toolsDir, systemPrompt string) (Config, error) {
+	if cfg.APIKey == "" {
+		return Config{}, fmt.Errorf("api_key is not configured (run: solai config set api-key <key>)")
+	}
+
+	kp, err := wallet.CreateWallet(cfg.WalletSeed)
+	if err != nil {
+		return Config{}, fmt.Errorf("creating wallet: %w", err)
+	}
+
+	cycleInterval := parseDuration(cfg.CycleInterval, 5*time.Minute)
+
+	llmProvider := capability.NewLLMProviderFromMap(cfg.Providers)
+	loader := func(bwrapPath string, checker capability.CapabilityChecker) ([]lctools.Tool, []error, error) {
+		return tool.LoadTools(toolsDir, llmProvider, checker, bwrapPath)
+	}
+	systemManager := capability.NewSystemManager(loader, llmProvider)
+
+	return Config{
+		SystemPrompt:  systemPrompt,
+		UserGoals:     cfg.UserGoals,
 		ToolsDir:      toolsDir,
 		Wallet:        &kp,
 		CycleInterval: cycleInterval,
