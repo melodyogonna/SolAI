@@ -2,49 +2,50 @@ package main
 
 import (
 	"context"
-	"io"
 	"log"
+	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	_ "github.com/joho/godotenv/autoload"
-	"github.com/melodyogonna/solai/solai-agent/wallet"
+	"github.com/melodyogonna/solai/solai-agent/agent"
+	"github.com/melodyogonna/solai/solai-agent/capability"
 	"github.com/tmc/langchaingo/llms/googleai"
 )
 
 func main() {
-	apiKey := os.Getenv("API_KEY")
-	if apiKey == "" {
-		log.Fatal("API key needs to be specified.")
-	}
-	systemPromptLocation := os.Getenv("SYSTEM_PROMPT")
-	if systemPromptLocation == "" {
-		log.Fatal("system prompt not passed, exiting.")
-	}
-
-	file, err := os.Open(systemPromptLocation)
+	cfg, err := agent.LoadConfig()
 	if err != nil {
-		log.Fatalf("could not open system prompt at location %s - err %s", systemPromptLocation, err)
+		log.Fatalf("configuration error: %v", err)
 	}
-	defer file.Close()
 
 	ctx := context.Background()
-	llm, err := googleai.New(ctx, googleai.WithAPIKey(apiKey), googleai.WithDefaultModel("gemini-2.5-pro"))
+	llm, err := googleai.New(ctx,
+		googleai.WithAPIKey(os.Getenv("API_KEY")),
+		googleai.WithDefaultModel("gemini-2.5-pro"),
+	)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("failed to initialize LLM: %v", err)
 	}
+	cfg.LLM = llm
 
-	prompt, err := io.ReadAll(file)
-	if err != nil {
-		log.Fatalf("unable to read prompt due to err - %s", err)
-	}
-	wallet, err := wallet.CreateWallet("")
-	if err != nil {
-		log.Fatal(err)
-	}
-	config := agentConfig{
-		model:        llm,
-		systemPrompt: prompt,
-		wallet:       &wallet,
-	}
-	run(ctx, config)
+	capability.Register("wallet", func() capability.Capability {
+		return capability.NewWalletCapability(cfg.Wallet)
+	})
+	capManager := capability.SetUp([]string{"wallet"})
+
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	slog.Info("SolAI agent starting",
+		"model", "gemini-2.5-pro",
+		"toolsDir", cfg.ToolsDir,
+		"cycleInterval", cfg.CycleInterval,
+		"wallet", cfg.Wallet.Base58PubKey(),
+	)
+
+	agent.Run(ctx, cfg, capManager)
+
+	slog.Info("SolAI agent stopped")
 }

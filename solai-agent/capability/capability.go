@@ -2,42 +2,39 @@ package capability
 
 import "context"
 
+// CapabilityClass defines the visibility and access level of a capability.
+type CapabilityClass int
+
+const (
+	// Core capabilities run invisibly in the background and are never
+	// exposed to the LLM or to agentic tools. Reserved for future use.
+	Core CapabilityClass = iota
+
+	// Internal capabilities are known to the main LLM but never exposed
+	// to agentic tools. The wallet is the primary Internal capability.
+	// Internal capabilities are injected into the system prompt so the
+	// LLM knows they exist.
+	Internal
+
+	// Regular capabilities are available to both the main LLM and can
+	// be requested by agentic tools. Reserved for future expansion.
+	Regular
+)
+
+// Capability is the interface that all system capabilities must implement.
+// Capabilities are managed separately from agentic tools — they are injected
+// into the system prompt rather than the LLM's tool list.
 type Capability interface {
-	// Name returns the unique identifier for this capability
+	// Name returns the unique identifier for this capability.
 	Name() string
-	// Description returns what this capability does (for the LLM system prompt)
+
+	// Description returns a human-readable description for injection into
+	// the system prompt. This is what the LLM sees.
 	Description() string
-	// Execute performs the actual action
+
+	// Class returns the CapabilityClass, determining visibility.
+	Class() CapabilityClass
+
+	// Execute performs the capability's action.
 	Execute(ctx context.Context, input string) (string, error)
-}
-
-// Factory defines a function that creates a new instance of a Capability
-type Factory func() Capability
-
-// registry holds all available capability constructors
-var registry = make(map[string]Factory)
-
-// Register adds a capability to the available options
-func Register(name string, factory Factory) {
-	registry[name] = factory
-}
-
-type capabilityManager struct {
-	enabledCapabilities []Capability
-}
-
-func (m capabilityManager) GetSystemCapabilities() []Capability {
-	return m.enabledCapabilities
-}
-
-func SetUp(enabledCapabilities []string) *capabilityManager {
-	cm := &capabilityManager{}
-
-	for _, capName := range enabledCapabilities {
-		if factory, exists := registry[capName]; exists {
-			cm.enabledCapabilities = append(cm.enabledCapabilities, factory())
-		}
-	}
-
-	return cm
 }

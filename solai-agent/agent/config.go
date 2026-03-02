@@ -1,0 +1,111 @@
+package agent
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/melodyogonna/solai/solai-agent/wallet"
+	"github.com/tmc/langchaingo/llms"
+)
+
+// Config holds all runtime configuration for the agent.
+// It is built once in main.go and passed into Run.
+type Config struct {
+	// LLM is the initialized language model. Set by main.go after LoadConfig returns.
+	LLM llms.Model
+
+	// SystemPrompt is the content of the SYSTEM_PROMPT file, loaded at startup.
+	// It defines the agent's role, rules, and tool usage patterns.
+	SystemPrompt string
+
+	// UserGoals is the content of the USER_PROMPT file, loaded at startup.
+	// It defines what the user wants the agent to accomplish autonomously.
+	UserGoals string
+
+	// ToolsDir is the path to the directory containing agentic tool subdirectories.
+	ToolsDir string
+
+	// Wallet is the agent's Solana keypair, exposed as an Internal capability.
+	Wallet *wallet.SolKeyPair
+
+	// CycleInterval is how long the agent sleeps between autonomous cycles.
+	CycleInterval time.Duration
+}
+
+// LoadConfig reads all configuration from environment variables.
+// Returns an error if any required variable is missing or a required file cannot be read.
+//
+// Required env vars: API_KEY, SYSTEM_PROMPT, USER_PROMPT, TOOLS_DIR
+// Optional env vars: WALLET_SEED (empty → generate new wallet), CYCLE_INTERVAL (default: 5m)
+//
+// Note: LoadConfig does not initialize the LLM or set Config.LLM. The caller (main.go)
+// is responsible for constructing the LLM with the API_KEY and assigning it.
+func LoadConfig() (Config, error) {
+	apiKey := os.Getenv("API_KEY")
+	if apiKey == "" {
+		return Config{}, fmt.Errorf("API_KEY environment variable is required")
+	}
+
+	systemPromptPath := os.Getenv("SYSTEM_PROMPT")
+	if systemPromptPath == "" {
+		return Config{}, fmt.Errorf("SYSTEM_PROMPT environment variable is required")
+	}
+	systemPrompt, err := loadFile(systemPromptPath)
+	if err != nil {
+		return Config{}, fmt.Errorf("loading system prompt: %w", err)
+	}
+
+	userPromptPath := os.Getenv("USER_PROMPT")
+	if userPromptPath == "" {
+		return Config{}, fmt.Errorf("USER_PROMPT environment variable is required")
+	}
+	userGoals, err := loadFile(userPromptPath)
+	if err != nil {
+		return Config{}, fmt.Errorf("loading user goals: %w", err)
+	}
+
+	toolsDir := os.Getenv("TOOLS_DIR")
+	if toolsDir == "" {
+		return Config{}, fmt.Errorf("TOOLS_DIR environment variable is required")
+	}
+
+	seedPhrase := os.Getenv("WALLET_SEED")
+	kp, err := wallet.CreateWallet(seedPhrase)
+	if err != nil {
+		return Config{}, fmt.Errorf("creating wallet: %w", err)
+	}
+
+	cycleInterval := parseDuration(os.Getenv("CYCLE_INTERVAL"), 5*time.Minute)
+
+	return Config{
+		SystemPrompt:  systemPrompt,
+		UserGoals:     userGoals,
+		ToolsDir:      toolsDir,
+		Wallet:        &kp,
+		CycleInterval: cycleInterval,
+	}, nil
+}
+
+// loadFile reads the full content of a file and returns it as a trimmed string.
+func loadFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading file %s: %w", path, err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// parseDuration parses a Go duration string. Returns defaultVal if the string
+// is empty or cannot be parsed.
+func parseDuration(s string, defaultVal time.Duration) time.Duration {
+	if s == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return defaultVal
+	}
+	return d
+}
