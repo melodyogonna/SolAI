@@ -4,11 +4,26 @@ An autonomous AI agent for the Solana blockchain. SolAI runs a continuous reason
 
 ---
 
+## Quick start
+
+```bash
+cd solai-agent
+go build -o solai .
+
+solai config set api-key <your-gemini-api-key>
+solai config set user-goals "Monitor SOL price and report every cycle"
+
+solai install melodyogonna/token-price   # install a tool from GitHub
+solai start                              # launch the agent inside a sandbox
+```
+
+---
+
 ## How it works
 
 SolAI operates in a **ReAct loop** (Reason → Act → Observe). Each cycle:
 
-1. The agent is given a system prompt (its role and rules) and a user goals prompt (what to accomplish).
+1. The agent is given a system prompt (its role and rules) and the user goals (what to accomplish).
 2. It plans which tools to call and in what order.
 3. It calls those tools, observes results, and adapts.
 4. It produces a structured summary of what was accomplished, what failed, and what to try next.
@@ -18,85 +33,145 @@ Each cycle creates a **fresh agent instance** — there is no state carried betw
 
 ---
 
+## CLI
+
+```
+solai install <owner/repo[@tag]>   Install a tool from a GitHub release
+solai config set <key> <value>     Set a configuration value
+solai config get <key>             Get a configuration value
+solai config list                  List all values (sensitive fields redacted)
+solai start [--no-sandbox]         Start the autonomous agent
+```
+
+### Configuration keys
+
+| Key | Description |
+|---|---|
+| `api-key` | Gemini API key for the main agent LLM |
+| `user-goals` | Goals the agent should pursue autonomously |
+| `cycle-interval` | Sleep duration between cycles (default: `5m`) |
+| `wallet-seed` | BIP39 mnemonic — a new wallet is generated if unset |
+| `provider.google` | Google AI key injected into tools that need it |
+| `provider.openai` | OpenAI key injected into tools that need it |
+| `provider.anthropic` | Anthropic key injected into tools that need it |
+| `sandbox.share-net` | Allow agent sandbox network access (default: `true`) |
+
+Configuration is stored in `~/.solai/config.json` and written atomically.
+
+---
+
 ## Architecture
 
 ```
-main.go
-  └─ loads config (agent/config.go)
-  └─ initialises Gemini LLM
-  └─ registers capabilities (wallet)
-  └─ runs agent loop (agent/agent.go)
-       └─ SystemManager.Setup()     ← loads tools, logs LLM providers
-       └─ SystemManager.Start(ctx)  ← runs background cleanup jobs
+solai start
+  └─ config.Load()                  ~/.solai/config.json
+  └─ sandbox.Extract()              embedded bwrap binary → /tmp/bwrap-*
+  └─ bwrap --unshare-all            agent sandbox
+       --ro-bind ~/.solai/config.json /etc/solai/config.json
+       --ro-bind ~/.solai/tools       /tools
+       --ro-bind <solai-binary>       /solai
+       -- /solai __agent-run
+
+__agent-run (inside sandbox)
+  └─ agent.LoadConfigFrom()         reads /etc/solai/config.json
+  └─ googleai.New()                 initialises Gemini LLM
+  └─ capability.SetUp()             wallet, network-manager
+  └─ agent.Run()                    autonomous cycle loop
+       └─ SystemManager.Setup()     loads tools from /tools, extracts bwrap for tool sandboxing
+       └─ SystemManager.Start(ctx)  background cleanup jobs
        └─ ReAct cycle loop
-            └─ buildCyclePrompt()   ← injects capability context (wallet address, etc.)
-            └─ runCycle()           ← OneShotAgent → chains.Run
-                 └─ AgenticTool.Call()  ← spawns tool subprocess via stdin/stdout JSON
+            └─ buildCyclePrompt()   injects capability context (wallet address, etc.)
+            └─ runCycle()           OneShotAgent → chains.Run
+                 └─ AgenticTool.Call()  spawns tool subprocess via stdin/stdout JSON
+                      └─ bwrap (nested)  each tool runs in its own sandbox
 ```
 
 ### Packages
 
 | Package | Responsibility |
 |---|---|
-| `agent/` | Config loading, autonomous cycle loop, prompt assembly |
+| `cli/` | Cobra commands: `install`, `config`, `start`, `__agent-run` |
+| `config/` | `~/.solai/config.json` — load, save, set, get |
+| `registry/` | Tool installation from GitHub releases |
+| `agent/` | Autonomous cycle loop, prompt assembly, config loading |
 | `capability/` | Capability system: wallet, LLM provider registry, SystemManager |
 | `tool/` | Tool discovery, manifest parsing, subprocess IPC |
+| `sandbox/` | Embedded bwrap binary, extraction |
+| `prompts/` | Embedded system prompt (`system.md`) |
 | `wallet/` | BIP39 seed derivation, ed25519 keypair, Base58 encoding |
+
+### Sandboxing
+
+Tools and the agent itself are isolated using [bubblewrap](https://github.com/containers/bubblewrap) (bwrap), a lightweight unprivileged sandbox.
+
+**Agent sandbox** (`solai start`): the `solai` binary re-invokes itself inside bwrap with `--unshare-all`. Only `~/.solai/config.json`, `~/.solai/tools/`, and the binary itself are visible inside. Networking is enabled by default so the agent can reach the Gemini API.
+
+**Tool sandbox** (nested): each tool subprocess gets its own bwrap instance. The tool directory is mounted read-only at `/app`. Network access is only granted to tools that declare `"required_capabilities": ["network-manager"]` in their manifest.
 
 ### Capabilities
 
-Capabilities are system-level features injected into the agent at startup. They are **not** LLM tools — they run server-side and inform the prompt.
+Capabilities are system-level features injected at startup. They are **not** LLM tools — they run server-side and inform the prompt or grant sandbox permissions.
 
 | Class | Visibility | Example |
 |---|---|---|
 | `Core` | Invisible — background infrastructure | `SystemManager` |
 | `Internal` | Known to the main LLM, hidden from tools | `WalletCapability` (exposes public key) |
-| `Regular` | Available to both LLM and tools | _(reserved)_ |
+| `Regular` | Grants sandbox permissions to tools that request them | `NetworkManagerCapability` |
 
-### Agentic Tools
+---
 
-Tools are standalone executables (binaries or scripts) that live in the `TOOLS_DIR` directory. Each tool has its own subdirectory containing:
+## Tools
 
-- `manifest.json` — name, description, version, executable path, and optional LLM config
-- An executable binary or script
+### Installing tools
 
-**IPC protocol:** The agent writes a JSON `ToolInput` to the tool's stdin and reads a JSON `ToolOutput` from stdout. Tools that need their own LLM receive `SOLAI_LLM_PROVIDER`, `SOLAI_LLM_MODEL`, and `SOLAI_LLM_API_KEY` as environment variables.
-
-```json
-// ToolInput (written to tool stdin)
-{
-  "overview": "One sentence describing the objective.",
-  "tasks": ["Step 1", "Step 2"]
-}
-
-// ToolOutput (read from tool stdout)
-{
-  "type": "result",   // or "error"
-  "content": "..."
-}
+```bash
+solai install melodyogonna/token-price          # latest release
+solai install melodyogonna/token-price@v1.0.0   # specific tag
 ```
 
-Tool errors are returned as strings in the `content` field so the LLM can observe them in the ReAct loop and adapt.
+Tools are downloaded from GitHub releases and stored in `~/.solai/tools/`. The release must include:
 
-#### Example tool manifest
+- `manifest.json` — tool manifest with `"executable": "./bin/<name>"`
+- `<name>-linux-amd64` / `<name>-linux-arm64` — statically linked binary
+- `checksums.txt` (optional) — SHA256 checksums for verification
+
+### Writing a tool
+
+Tools are standalone executables (any language) that communicate via stdin/stdout JSON.
+
+**IPC protocol:**
+
+```json
+// Written to tool stdin
+{ "overview": "One sentence describing the objective.", "tasks": ["Step 1", "Step 2"] }
+
+// Read from tool stdout
+{ "type": "success", "output": "..." }
+{ "type": "error",   "output": "something went wrong" }
+```
+
+Tool errors are returned as strings in `output` so the LLM can observe them in the ReAct loop and adapt.
+
+**manifest.json:**
 
 ```json
 {
   "name": "token-price",
   "description": "Fetches current USD prices for Solana tokens from Jupiter.",
   "version": "1.0.0",
-  "executable": "./token-price"
+  "executable": "./bin/token-price",
+  "required_capabilities": ["network-manager"]
 }
 ```
 
-For tools that need an LLM, add `llm_options`:
+For tools that need their own LLM, add `llm_options`:
 
 ```json
 {
   "name": "my-tool",
   "description": "...",
   "version": "1.0.0",
-  "executable": "./my-tool",
+  "executable": "./bin/my-tool",
   "llm_options": {
     "primary": "gemini-2.5-pro",
     "supported": [
@@ -107,49 +182,10 @@ For tools that need an LLM, add `llm_options`:
 }
 ```
 
-### SystemManager
+The agent injects `SOLAI_LLM_PROVIDER`, `SOLAI_LLM_MODEL`, and `SOLAI_LLM_API_KEY` into the tool's environment automatically.
 
-`SystemManager` is the Core capability that owns the agent's operational environment:
+### Adding a tool locally (without a GitHub release)
 
-- Loads tools from `TOOLS_DIR` on startup via an injected `ToolLoaderFunc` (the indirection prevents a circular import between `capability` and `tool`).
-- Logs which LLM providers are configured at startup.
-- Runs registered `CleanupJob`s in background goroutines, each on its own ticker interval. Job errors are logged as warnings — they never crash the agent.
-
----
-
-## Configuration
-
-All configuration is via environment variables. Copy `.env.example` to `.env` (loaded automatically via `godotenv`).
-
-| Variable | Required | Description |
-|---|---|---|
-| `API_KEY` | yes | Gemini API key for the main agent LLM |
-| `SYSTEM_PROMPT` | yes | Path to the system prompt file |
-| `USER_PROMPT` | yes | Path to the user goals file |
-| `TOOLS_DIR` | yes | Path to the directory containing tool subdirectories |
-| `WALLET_SEED` | no | BIP39 mnemonic. A new wallet is generated if omitted |
-| `CYCLE_INTERVAL` | no | How long to sleep between cycles (default: `5m`) |
-| `LLM_PROVIDER_GOOGLE` | no | Google AI API key, injected into tools that need it |
-| `LLM_PROVIDER_OPENAI` | no | OpenAI API key, injected into tools that need it |
-| `LLM_PROVIDER_ANTHROPIC` | no | Anthropic API key, injected into tools that need it |
-
----
-
-## Running
-
-```bash
-cd solai-agent
-go build -o solai .
-TOOLS_DIR=../tools ./solai
-```
-
----
-
-## Adding a tool
-
-1. Create a subdirectory under `TOOLS_DIR`, e.g. `tools/my-tool/`.
-2. Write a `manifest.json` (see format above).
-3. Build or place your executable in that directory.
-4. The tool is discovered automatically on the next agent startup — no code changes required.
-
-Tools can be written in any language. The only contract is the stdin/stdout JSON protocol.
+1. Create `~/.solai/tools/my-tool/manifest.json` (see format above, `executable` must be `"./bin/my-tool"`).
+2. Place the binary at `~/.solai/tools/my-tool/bin/my-tool` (chmod 0755).
+3. The tool is discovered automatically on the next `solai start`.
