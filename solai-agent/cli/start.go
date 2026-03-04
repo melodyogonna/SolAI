@@ -21,7 +21,9 @@ By default the agent runs inside a bubblewrap (bwrap) sandbox for isolation.
 Use --no-sandbox to skip sandboxing (useful for debugging).
 
 Prerequisites:
-  solai config set api-key <key>
+  solai config set model.provider <google|openai|anthropic>
+  solai config set model.name <model-name>
+  solai config set provider.<name> <api-key>
   solai config set user-goals "Monitor SOL price and report daily"`,
 	Args: cobra.NoArgs,
 	RunE: runStart,
@@ -38,8 +40,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if cfg.APIKey == "" {
-		return fmt.Errorf("api_key is not configured; run: solai config set api-key <key>")
+	if cfg.Model.Provider == "" || cfg.Model.Name == "" {
+		return fmt.Errorf("model not configured; run:\n  solai config set model.provider <google|openai|anthropic>\n  solai config set model.name <model-name>")
+	}
+	if cfg.Providers[cfg.Model.Provider] == "" {
+		return fmt.Errorf("no API key for provider %q; run: solai config set provider.%s <key>", cfg.Model.Provider, cfg.Model.Provider)
 	}
 	if cfg.UserGoals == "" {
 		return fmt.Errorf("user_goals is not configured; run: solai config set user-goals \"<goals>\"")

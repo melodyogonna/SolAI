@@ -11,12 +11,18 @@ import (
 
 // SolaiConfig is the top-level configuration stored in ~/.solai/config.json.
 type SolaiConfig struct {
-	APIKey        string            `json:"api_key"`
-	Providers     map[string]string `json:"providers"`    // google/openai/anthropic → key
+	Model         ModelConfig       `json:"model"`
+	Providers     map[string]string `json:"providers"`    // google/openai/anthropic → api key
 	WalletSeed    string            `json:"wallet_seed"`
 	CycleInterval string            `json:"cycle_interval"`
 	UserGoals     string            `json:"user_goals"`
 	Sandbox       SandboxConfig     `json:"sandbox"`
+}
+
+// ModelConfig identifies the LLM the coordinator uses.
+type ModelConfig struct {
+	Provider string `json:"provider"` // "google", "openai", or "anthropic"
+	Name     string `json:"name"`     // e.g. "gemini-2.5-pro", "gpt-4o", "claude-opus-4-6"
 }
 
 // SandboxConfig controls how the agent process is sandboxed by bwrap.
@@ -105,12 +111,15 @@ func (c *SolaiConfig) Save() error {
 
 // Set updates a single configuration value by dot-notation key.
 //
-// Supported keys: api-key, provider.google, provider.openai, provider.anthropic,
+// Supported keys: model.provider, model.name,
+// provider.google, provider.openai, provider.anthropic,
 // wallet-seed, cycle-interval, user-goals, sandbox.share-net.
 func (c *SolaiConfig) Set(key, value string) error {
 	switch key {
-	case "api-key":
-		c.APIKey = value
+	case "model.provider":
+		c.Model.Provider = value
+	case "model.name":
+		c.Model.Name = value
 	case "provider.google":
 		c.ensureProviders()
 		c.Providers["google"] = value
@@ -136,7 +145,7 @@ func (c *SolaiConfig) Set(key, value string) error {
 			return fmt.Errorf("sandbox.share-net: expected true/false, got %q", value)
 		}
 	default:
-		return fmt.Errorf("unknown config key %q; valid keys: api-key, provider.google, provider.openai, provider.anthropic, wallet-seed, cycle-interval, user-goals, sandbox.share-net", key)
+		return fmt.Errorf("unknown config key %q; valid keys: model.provider, model.name, provider.google, provider.openai, provider.anthropic, wallet-seed, cycle-interval, user-goals, sandbox.share-net", key)
 	}
 	return nil
 }
@@ -144,8 +153,10 @@ func (c *SolaiConfig) Set(key, value string) error {
 // Get retrieves a single configuration value by dot-notation key.
 func (c *SolaiConfig) Get(key string) (string, error) {
 	switch key {
-	case "api-key":
-		return c.APIKey, nil
+	case "model.provider":
+		return c.Model.Provider, nil
+	case "model.name":
+		return c.Model.Name, nil
 	case "provider.google":
 		return c.Providers["google"], nil
 	case "provider.openai":

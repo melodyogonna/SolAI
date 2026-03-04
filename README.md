@@ -1,6 +1,6 @@
 # SolAI
 
-An autonomous AI agent for the Solana blockchain. SolAI runs a continuous reasoning loop powered by Gemini 2.5 Pro, coordinating a suite of external tools to accomplish user-defined goals — monitoring token prices, reading on-chain data, executing transactions, or anything else a tool can be built to do.
+An autonomous AI agent for the Solana blockchain. SolAI runs a continuous reasoning loop powered by a user-configured LLM (Google, OpenAI, or Anthropic), coordinating a suite of external tools to accomplish user-defined goals — monitoring token prices, reading on-chain data, executing transactions, or anything else a tool can be built to do.
 
 ---
 
@@ -10,7 +10,14 @@ An autonomous AI agent for the Solana blockchain. SolAI runs a continuous reason
 cd solai-agent
 go build -o solai .
 
-solai config set api-key <your-gemini-api-key>
+# Select which model the coordinator uses
+solai config set model.provider google
+solai config set model.name gemini-2.5-pro
+
+# Set API credentials (add as many providers as you have keys for —
+# they are made available to agentic tools that need an LLM)
+solai config set provider.google <your-google-api-key>
+
 solai config set user-goals "Monitor SOL price and report every cycle"
 
 solai install melodyogonna/token-price   # install a tool from GitHub
@@ -45,15 +52,28 @@ solai start [--no-sandbox]         Start the autonomous agent
 
 ### Configuration keys
 
+**Coordinator model** (required — pick one provider and model):
+
 | Key | Description |
 |---|---|
-| `api-key` | Gemini API key for the main agent LLM |
+| `model.provider` | LLM provider for the coordinator: `google`, `openai`, or `anthropic` |
+| `model.name` | Model name (e.g. `gemini-2.5-pro`, `gpt-4o`, `claude-opus-4-6`) |
+
+**Provider credentials** (set any you have — the coordinator uses its own, tools use whichever matches their `llm_options`):
+
+| Key | Description |
+|---|---|
+| `provider.google` | Google AI API key |
+| `provider.openai` | OpenAI API key |
+| `provider.anthropic` | Anthropic API key |
+
+**Agent settings:**
+
+| Key | Description |
+|---|---|
 | `user-goals` | Goals the agent should pursue autonomously |
 | `cycle-interval` | Sleep duration between cycles (default: `5m`) |
 | `wallet-seed` | BIP39 mnemonic — a new wallet is generated if unset |
-| `provider.google` | Google AI key injected into tools that need it |
-| `provider.openai` | OpenAI key injected into tools that need it |
-| `provider.anthropic` | Anthropic key injected into tools that need it |
 | `sandbox.share-net` | Allow agent sandbox network access (default: `true`) |
 
 Configuration is stored in `~/.solai/config.json` and written atomically.

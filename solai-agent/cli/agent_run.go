@@ -14,7 +14,10 @@ import (
 	solaiconfig "github.com/melodyogonna/solai/solai-agent/config"
 	"github.com/melodyogonna/solai/solai-agent/prompts"
 	"github.com/spf13/cobra"
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/anthropic"
 	"github.com/tmc/langchaingo/llms/googleai"
+	"github.com/tmc/langchaingo/llms/openai"
 )
 
 // agentRunCmd is the hidden subcommand invoked inside the bwrap sandbox by
@@ -58,10 +61,7 @@ func agentRun(ctx context.Context, cfg *solaiconfig.SolaiConfig, toolsDir string
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	llm, err := googleai.New(ctx,
-		googleai.WithAPIKey(cfg.APIKey),
-		googleai.WithDefaultModel("gemini-2.5-pro"),
-	)
+	llm, err := newLLM(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("initializing LLM: %w", err)
 	}
@@ -81,7 +81,8 @@ func agentRun(ctx context.Context, cfg *solaiconfig.SolaiConfig, toolsDir string
 	capManager := capability.SetUp([]string{"wallet", "network-manager"})
 
 	slog.Info("SolAI agent starting",
-		"model", "gemini-2.5-pro",
+		"provider", cfg.Model.Provider,
+		"model", cfg.Model.Name,
 		"toolsDir", toolsDir,
 		"cycleInterval", agentCfg.CycleInterval,
 		"wallet", agentCfg.Wallet.Base58PubKey(),
@@ -90,4 +91,32 @@ func agentRun(ctx context.Context, cfg *solaiconfig.SolaiConfig, toolsDir string
 	agent.Run(ctx, agentCfg, capManager)
 	slog.Info("SolAI agent stopped")
 	return nil
+}
+
+// newLLM creates a langchaingo LLM from the model config in cfg.
+// The API key is taken from cfg.Providers[cfg.Model.Provider].
+func newLLM(ctx context.Context, cfg *solaiconfig.SolaiConfig) (llms.Model, error) {
+	provider := cfg.Model.Provider
+	model := cfg.Model.Name
+	apiKey := cfg.Providers[provider]
+
+	switch provider {
+	case "google":
+		return googleai.New(ctx,
+			googleai.WithAPIKey(apiKey),
+			googleai.WithDefaultModel(model),
+		)
+	case "openai":
+		return openai.New(
+			openai.WithToken(apiKey),
+			openai.WithModel(model),
+		)
+	case "anthropic":
+		return anthropic.New(
+			anthropic.WithToken(apiKey),
+			anthropic.WithModel(model),
+		)
+	default:
+		return nil, fmt.Errorf("unsupported provider %q (supported: google, openai, anthropic)", provider)
+	}
 }

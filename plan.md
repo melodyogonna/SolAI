@@ -2,7 +2,7 @@
 
 ## Overview
 
-An autonomous AI agent that interacts with the Solana blockchain. Built in Go using [langchaingo](https://tmc.github.io/langchaingo/docs/) and Gemini 2.5 Pro as the reasoning engine. The agent runs in a continuous loop, coordinating a suite of user-installed agentic tools to accomplish user-defined goals. If a goal cannot be accomplished with available tools, the agent reports this rather than hallucinating actions.
+An autonomous AI agent that interacts with the Solana blockchain. Built in Go using [langchaingo](https://tmc.github.io/langchaingo/docs/) with a user-configured LLM as the reasoning engine (Google, OpenAI, or Anthropic). The agent runs in a continuous loop, coordinating a suite of user-installed agentic tools to accomplish user-defined goals. If a goal cannot be accomplished with available tools, the agent reports this rather than hallucinating actions.
 
 ---
 
@@ -34,7 +34,7 @@ solai start
 
 __agent-run (inside sandbox)
   └─ Read config from /etc/solai/config.json
-  └─ Init Gemini LLM (cfg.APIKey)
+  └─ Init LLM from cfg.Model (provider + name, key from cfg.Providers)
   └─ Register capabilities: wallet, network-manager
   └─ agent.Run(ctx, cfg, capManager)
 ```
@@ -79,7 +79,7 @@ Agentic tools are **LLM subagents** — each one wraps a specific capability (a 
 This means the coordinator never needs to know the details of how a capability works — it just describes what it wants accomplished and the subagent figures out how.
 
 ```
-Main coordinator (Gemini)
+Main coordinator (user-configured LLM)
   ├─ "Get me the current SOL price" → token-price subagent
   │     └─ internal LLM → calls Jupiter price API → returns { price_usd: 142.50 }
   ├─ "What is the balance at address XYZ?" → solana-balance subagent
@@ -199,7 +199,10 @@ Stored in `~/.solai/config.json`. Managed via `solai config set/get/list`.
 
 ```json
 {
-  "api_key": "",
+  "model": {
+    "provider": "google",
+    "name": "gemini-2.5-pro"
+  },
   "providers": {
     "google": "",
     "openai": "",
@@ -214,6 +217,10 @@ Stored in `~/.solai/config.json`. Managed via `solai config set/get/list`.
   }
 }
 ```
+
+`model` selects the coordinator's LLM. At least one provider credential must be set, and it must match `model.provider`.
+
+`providers` holds credentials for all configured providers. The coordinator uses `providers[model.provider]`. Agentic tools draw from this map independently — a tool whose `llm_options.primary` is `openai` will use `providers.openai` even if the coordinator is configured for Google. This lets the coordinator and tools use different models.
 
 `sandbox.extra_binds` accepts `[{"path": "/host/path", "read_only": true}]` entries that are bind-mounted into the agent sandbox (not tool sandboxes — use `file-manager` for that).
 

@@ -19,14 +19,19 @@ var configSetCmd = &cobra.Command{
 	Short: "Set a configuration value",
 	Long: `Set a configuration value in ~/.solai/config.json.
 
-Supported keys:
-  api-key              Gemini API key for the main agent LLM
-  provider.google      Google API key for agentic tools
-  provider.openai      OpenAI API key for agentic tools
-  provider.anthropic   Anthropic API key for agentic tools
-  wallet-seed          BIP39 seed phrase for the agent wallet
-  cycle-interval       Duration between agent cycles (e.g. 5m, 1h)
+Model (coordinator LLM — pick one):
+  model.provider       Provider for the coordinator: google, openai, or anthropic
+  model.name           Model name (e.g. gemini-2.5-pro, gpt-4o, claude-opus-4-6)
+
+Provider credentials (used by coordinator and injected into agentic tools):
+  provider.google      Google AI API key
+  provider.openai      OpenAI API key
+  provider.anthropic   Anthropic API key
+
+Agent settings:
   user-goals           Goals the agent should pursue autonomously
+  cycle-interval       Duration between agent cycles (e.g. 5m, 1h)
+  wallet-seed          BIP39 seed phrase for the agent wallet
   sandbox.share-net    Allow agent sandbox network access (true/false)`,
 	Args: cobra.ExactArgs(2),
 	RunE: runConfigSet,
@@ -91,23 +96,25 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// Build a redacted copy for display.
+	providers := make(map[string]string)
+	for k, v := range cfg.Providers {
+		providers[k] = redact(v)
+	}
+
 	display := map[string]any{
-		"api_key":        redact(cfg.APIKey),
-		"wallet_seed":    redact(cfg.WalletSeed),
-		"cycle_interval": cfg.CycleInterval,
+		"model": map[string]any{
+			"provider": cfg.Model.Provider,
+			"name":     cfg.Model.Name,
+		},
+		"providers":      providers,
 		"user_goals":     cfg.UserGoals,
+		"cycle_interval": cfg.CycleInterval,
+		"wallet_seed":    redact(cfg.WalletSeed),
 		"sandbox": map[string]any{
 			"share_net":   cfg.Sandbox.ShareNet,
 			"extra_binds": cfg.Sandbox.ExtraBinds,
 		},
 	}
-
-	providers := make(map[string]string)
-	for k, v := range cfg.Providers {
-		providers[k] = redact(v)
-	}
-	display["providers"] = providers
 
 	data, err := json.MarshalIndent(display, "", "  ")
 	if err != nil {
@@ -117,12 +124,12 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// redact replaces a non-empty sensitive string with a redaction marker.
+// redact replaces a non-empty sensitive string with a redaction marker,
+// preserving a short prefix for identification.
 func redact(s string) string {
 	if s == "" {
 		return ""
 	}
-	// Show a short prefix for identification, redact the rest.
 	if len(s) > 8 {
 		return s[:4] + strings.Repeat("*", len(s)-4)
 	}

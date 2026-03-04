@@ -113,8 +113,11 @@ func LoadConfig() (Config, error) {
 // Note: LoadConfigFrom does not initialize the LLM or set Config.LLM. The caller
 // is responsible for constructing the LLM with cfg.APIKey and assigning it.
 func LoadConfigFrom(cfg *solaiconfig.SolaiConfig, toolsDir, systemPrompt string) (Config, error) {
-	if cfg.APIKey == "" {
-		return Config{}, fmt.Errorf("api_key is not configured (run: solai config set api-key <key>)")
+	if cfg.Model.Provider == "" || cfg.Model.Name == "" {
+		return Config{}, fmt.Errorf("model not configured (run: solai config set model.provider <google|openai|anthropic> && solai config set model.name <model>)")
+	}
+	if cfg.Providers[cfg.Model.Provider] == "" {
+		return Config{}, fmt.Errorf("no API key for provider %q (run: solai config set provider.%s <key>)", cfg.Model.Provider, cfg.Model.Provider)
 	}
 
 	kp, err := wallet.CreateWallet(cfg.WalletSeed)
