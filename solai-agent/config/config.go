@@ -48,8 +48,9 @@ func Dir() string {
 
 // ToolsDir returns the ~/.solai/tools directory path.
 func ToolsDir() string {
-	// AI! tools dir whould be created if it does not already exist
-	return filepath.Join(Dir(), "tools")
+	path := filepath.Join(Dir(), "tools")
+	_ = os.MkdirAll(path, 0o755)
+	return path
 }
 
 // ConfigPath returns the path to ~/.solai/config.json.
