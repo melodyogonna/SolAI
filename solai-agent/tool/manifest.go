@@ -55,6 +55,11 @@ type Manifest struct {
 	// Tools declaring capabilities that are not registered are disabled at load
 	// time with a warning. An absent or empty list means minimal sandbox only.
 	RequiredCapabilities []string `json:"required_capabilities,omitempty"`
+
+	// Timeout is a Go duration string (e.g. "90s", "2m") for how long a single
+	// tool invocation may run before it is killed. Defaults to DefaultToolTimeout
+	// when absent or unparseable.
+	Timeout string `json:"timeout,omitempty"`
 }
 
 // LoadManifest reads and JSON-decodes the manifest.json at the given file path.

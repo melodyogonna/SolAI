@@ -10,7 +10,9 @@ import (
 )
 
 // DefaultToolTimeout is the maximum time a single tool execution may run.
-const DefaultToolTimeout = 30 * time.Second
+// LLM subagents (the expected tool pattern) need time for at least one LLM
+// round-trip plus their external API calls, so the default is generous.
+const DefaultToolTimeout = 2 * time.Minute
 
 // AgenticTool implements langchaingo's tools.Tool interface.
 // Each instance corresponds to one discovered tool directory.
@@ -29,11 +31,20 @@ type AgenticTool struct {
 // NewAgenticTool constructs an AgenticTool from a manifest, its directory,
 // an optional resolved LLM config (nil for tools that do not need an LLM),
 // and the sandbox policy resolved from the tool's required_capabilities.
+//
+// The per-tool timeout is taken from manifest.Timeout if set and parseable;
+// otherwise DefaultToolTimeout is used.
 func NewAgenticTool(manifest Manifest, dir string, llmCfg *capability.LLMConfig, policy SandboxPolicy) *AgenticTool {
+	timeout := DefaultToolTimeout
+	if manifest.Timeout != "" {
+		if d, err := time.ParseDuration(manifest.Timeout); err == nil && d > 0 {
+			timeout = d
+		}
+	}
 	return &AgenticTool{
 		manifest:      manifest,
 		dir:           dir,
-		timeout:       DefaultToolTimeout,
+		timeout:       timeout,
 		llmCfg:        llmCfg,
 		sandboxPolicy: policy,
 	}
