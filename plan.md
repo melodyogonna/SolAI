@@ -1,79 +1,230 @@
-# Overview
+# SolAI — Architecture Plan
 
-This is an attempt to build an Autonomous AI agent that interacts with Solana, the project is built on Go and leverages [langchaingo](https://tmc.github.io/langchaingo/docs/) | https://pkg.go.dev/github.com/tmc/langchaingo@v0.1.14 project.
+## Overview
 
-## Design
+An autonomous AI agent that interacts with the Solana blockchain. Built in Go using [langchaingo](https://tmc.github.io/langchaingo/docs/) and Gemini 2.5 Pro as the reasoning engine. The agent runs in a continuous loop, coordinating a suite of user-installed agentic tools to accomplish user-defined goals. If a goal cannot be accomplished with available tools, the agent reports this rather than hallucinating actions.
 
-The basic idea is a fully autonomous AI agent that runs in a sandbox and coordinates a suite of "Agentic Tools". The agent itself would do nothing but plan how tasks would be accomplished based on available agentic tools; if the task it is supposed to work can not be accomplished by available agentic tools then it would show a message to this effect and not attempt to work on the task.
+---
 
-### Environment
+## Core Design Principles
 
-Like I said, the agent would run inside a sandbox, I've not decided on which, I'm still building the agent ... but here is a basic idea of what I envision. The main agent would run inside a main sandbox, with system capabilities mounted on top as enabled by the user. System capabilities are system functionalities which the agent would be allowed to use outside of the sandbox, example of system capabilities are: File Management, System manager (which would manage the sandbox), Wallet manager (which would manager Solana wallets and sign transactions and requests), etc.
-I hope to provide installation mediums which allow capabilities to be enabled and configured during setup.
+- **Hierarchical multi-agent system.** SolAI is a coordinator agent that delegates to subagents. Each agentic tool is itself an LLM agent — it receives a prompt from the main agent, reasons about it using its own LLM, calls the specific capability it wraps (an API, an RPC endpoint, a smart contract), and returns a structured result.
+- **The coordinator plans; subagents execute.** The main agent never calls external APIs or executes transactions directly. It decomposes goals into prompts and dispatches them to the appropriate subagent tools.
+- **Fresh state per cycle.** A new coordinator agent instance is created each cycle. No LLM state bleeds between cycles. Persistent state lives in tools and on-chain.
+- **Sandboxed by default.** Both the coordinator and each subagent tool run in isolated bubblewrap (bwrap) sandboxes. Capabilities explicitly widen what is allowed.
+- **Tools as plugins.** Agentic tools are packaged and distributed as GitHub releases, installable via `solai install`. No code changes to the agent are required to add a tool.
 
-In addition to capability the AI agent would have available a suite of agentic tools, available ones are entirely configured by the user and is the main way which the agent would gain capacity. Agentic tools are simple one-shot agents which wrap around a specific functionality or tool. They can be packaged by external contributors and installed by users of SolAI as plugins. Agentic tools would run in their own sandbox and communication between them and the main AI would be implicitly handled by some form of core system capability ... the main AI agent would just see a tool which can be called.
+---
 
+## Startup Flow
 
-### Agentic tools
+```
+solai start
+  └─ Load ~/.solai/config.json
+  └─ Validate: api_key and user_goals must be set
+  └─ Extract embedded bwrap binary → /tmp/bwrap-*
+  └─ Launch agent sandbox:
+       bwrap --unshare-all [--share-net]
+         --ro-bind ~/.solai/config.json  /etc/solai/config.json
+         --ro-bind ~/.solai/tools        /tools
+         --ro-bind <solai-binary>        /solai
+         --proc /proc --dev /dev --tmpfs /tmp
+         --die-with-parent
+         -- /solai __agent-run
 
-Like I've explained, I want agentic tools to be simple agents that wrap around specific functionalities. They need to be agentic because I want them to accept prompts, then use their tool call to accomplish the task specified in the prompt. The main AI which cordinates these agentic tools would formulate these prompts and then call the agentic tools with them.
+__agent-run (inside sandbox)
+  └─ Read config from /etc/solai/config.json
+  └─ Init Gemini LLM (cfg.APIKey)
+  └─ Register capabilities: wallet, network-manager
+  └─ agent.Run(ctx, cfg, capManager)
+```
 
-#### Interface of agentic tools
+---
 
-The agentic tools would have 3 communication interfaces: input, output, and signal. input and output would be file directories mounted into the sandbox (and maybe exposed as env vars) where the agent can read the prompts for input, and finally write the output to a file in the output directory. When a prompt is written into a tools input, it does not immediately start working on it unless it receives a signal in the signal channel. In fact, it should not even know a prompt has been made, agentic tools are expected to be listening on the signal channel for signals of what to do next, this would contain signal name and payload (which is where the exact input filename would be.). After executing the agentic tool should write the result to their output directory, using the same as the input name. It should not notify anybody or anything that it has finished, we would have a system monitor looking at the output buffers(folder) of agentic tools for when a response is out.
+## Coordinator Cycle Loop
 
-#### Communication format
+Every `cycle_interval` (default 5m):
 
-My plan is for the input and output to be communicated as json files, but maybe this is a bad idea and I'll need to find something better. Input messages would have the format:
+```
+SystemManager.Setup()
+  └─ Extract bwrap for subagent sandboxing (into /tmp inside agent sandbox)
+  └─ Discover tools from /tools/ — load manifests, validate capabilities
+  └─ Log configured LLM providers
+
+buildCyclePrompt()
+  └─ Append capability context (e.g. wallet public key) to user goals
+
+runCycle()  [OneShotAgent, max 10 iterations]
+  └─ ReAct: Reason → pick subagent → formulate prompt → Act → Observe result → repeat
+  └─ Each "Act" spawns a subagent process: writes ToolInput to stdin, reads ToolOutput from stdout
+  └─ On ErrNotFinished: log warning, continue to next cycle
+  └─ On timeout (2× cycle_interval): log warning, continue
+
+Sleep cycle_interval (or wake early on SIGINT/SIGTERM)
+```
+
+---
+
+## Agentic Tools
+
+### What they are
+
+Agentic tools are **LLM subagents** — each one wraps a specific capability (a Solana RPC call, a DEX API, a price feed, etc.) and exposes it to the coordinator as a single callable tool. When the coordinator invokes a tool, the tool binary:
+
+1. Receives a natural-language prompt from the coordinator (overview + task list)
+2. Spins up its own internal LLM agent
+3. Uses that agent to reason about the prompt and call its wrapped capability
+4. Returns a structured result to the coordinator
+
+This means the coordinator never needs to know the details of how a capability works — it just describes what it wants accomplished and the subagent figures out how.
+
+```
+Main coordinator (Gemini)
+  ├─ "Get me the current SOL price" → token-price subagent
+  │     └─ internal LLM → calls Jupiter price API → returns { price_usd: 142.50 }
+  ├─ "What is the balance at address XYZ?" → solana-balance subagent
+  │     └─ internal LLM → calls Solana RPC getBalance → returns { balance: 4.2 }
+  └─ "Swap 1 SOL for USDC" → swap-executor subagent
+        └─ internal LLM → builds Jupiter swap tx → signs → submits → returns tx sig
+```
+
+Agentic tools are standalone executables (any language) distributed as GitHub releases. Each has a subdirectory under `~/.solai/tools/`:
+
+```
+~/.solai/tools/<name>/
+  manifest.json        — metadata, executable path, capabilities required
+  bin/<name>           — statically linked binary (chmod 0755)
+```
+
+### IPC protocol
+
+The coordinator communicates with each subagent via stdin/stdout JSON. The tool process lifetime is one invocation — it receives a prompt, runs its internal agent loop to completion, writes its result, and exits.
+
+**Input** (coordinator → subagent, written to stdin):
+```json
+{
+  "overview": "One sentence describing the objective.",
+  "tasks": ["Step 1", "Step 2", "Step 3"]
+}
+```
+
+The `overview` and `tasks` are a structured prompt. The subagent's internal LLM interprets them and determines how to use its wrapped capability to satisfy the request.
+
+**Output** (subagent → coordinator, read from stdout):
+```json
+{ "type": "success", "output": <any JSON value> }
+{ "type": "error",   "output": "human-readable error string" }
+```
+
+Errors are surfaced as strings so the coordinator observes them as Observations in its ReAct loop and can adapt (retry with different input, try a different tool, or report the failure).
+
+### Tool sandbox (nested bwrap)
+
+Each tool subprocess runs in its own bwrap instance inside the agent sandbox (nested unprivileged namespaces, supported on Linux 5.x+):
+
+```
+bwrap --unshare-all
+  --ro-bind /tools/<name>  /app
+  --tmpfs /tmp --proc /proc --dev /dev
+  --die-with-parent
+  [--share-net]   ← only if "network-manager" in required_capabilities
+  -- /app/<name>
+```
+
+### Tool manifest format
 
 ```json
 {
-  "overview": "This is a description of the tasks I want you to accomplish.",
-  "tasks": ["Do this first", "then this", "finally this"]
+  "name": "token-price",
+  "description": "Fetches USD prices for Solana tokens from Jupiter.",
+  "version": "1.0.0",
+  "executable": "./bin/token-price",
+  "required_capabilities": ["network-manager"],
+  "llm_options": {
+    "primary": "gemini-2.5-pro",
+    "supported": [
+      { "model": "gemini-2.5-pro", "provider": "google" },
+      { "model": "gpt-4o",         "provider": "openai" }
+    ]
+  }
 }
-
 ```
 
-Output messages will have the following format:
+`llm_options` is required for any tool that uses an internal LLM agent (which is the expected pattern). The coordinator resolves credentials from `config.providers` and injects `SOLAI_LLM_PROVIDER`, `SOLAI_LLM_MODEL`, and `SOLAI_LLM_API_KEY` into the subagent's environment. Tools that are purely deterministic (no reasoning required) may omit `llm_options`.
+
+### Tool installation
+
+```
+solai install owner/repo[@tag]
+  └─ GET github.com/repos/{owner}/{repo}/releases/{latest|tag}
+  └─ Download manifest.json → parse tool name
+  └─ Download {name}-linux-{amd64|arm64}
+  └─ Verify SHA256 against checksums.txt (if present)
+  └─ Write to ~/.solai/tools/{name}/manifest.json
+  └─ Write to ~/.solai/tools/{name}/bin/{name} (chmod 0755)
+```
+
+---
+
+## Capabilities
+
+Capabilities are system-level features registered at startup. They are not LLM tools — they run inside the agent process and either inject context into the prompt or grant sandbox permissions to tools.
+
+| Class | Visible to | Purpose |
+|---|---|---|
+| `Core` | Nobody | Background infrastructure (SystemManager) |
+| `Internal` | Main LLM only | Inform the agent about itself (e.g. wallet public key in prompt) |
+| `Regular` | Main LLM + tools | Grant sandbox permissions to tools that request them |
+
+### Implemented capabilities
+
+| Name | Class | Effect |
+|---|---|---|
+| `system-manager` | Core | Owns tool loading, LLM provider logging, cleanup jobs, sandbox extraction |
+| `wallet` | Internal | Derives ed25519 keypair from BIP39 seed; exposes public key in cycle prompt |
+| `network-manager` | Regular | Grants `--share-net` to tool sandboxes that declare it |
+
+### Planned capabilities
+
+| Name | Class | Effect |
+|---|---|---|
+| `file-manager` | Regular | Bind-mounts user-configured paths into tool sandboxes |
+| `web-ui` | Internal | Web interface for configuring agent and tools |
+
+---
+
+## Configuration
+
+Stored in `~/.solai/config.json`. Managed via `solai config set/get/list`.
 
 ```json
 {
-  "type": "success",
-  "ouput": <Some json object repesenting output, could be a string, number, or a json object>
+  "api_key": "",
+  "providers": {
+    "google": "",
+    "openai": "",
+    "anthropic": ""
+  },
+  "wallet_seed": "",
+  "cycle_interval": "5m",
+  "user_goals": "",
+  "sandbox": {
+    "share_net": true,
+    "extra_binds": []
+  }
 }
 ```
 
-There'll be 3 basic types of outputs: success, error, and request.
+`sandbox.extra_binds` accepts `[{"path": "/host/path", "read_only": true}]` entries that are bind-mounted into the agent sandbox (not tool sandboxes — use `file-manager` for that).
 
-#### Agentic tool requests
+---
 
-When agentic tools needs to use system capabilities not provided to them during startup to accomplish a task they need to formulate request. This is basically an output placed in their output buffer with a type of "request", this request will be passed to the main AI to analyse, if the request is valid, a permission will be granted, which the AI will sign. IF the request is invalid (or malicious) it'll be rejected and the agentic tool session terminate.
+## What is not yet implemented
 
-### Communication logistics
-
-The idea I have is that there'll be a core system capability responsible for passing messages between the main agentic and the agentic tools. The agentic tools will be exposed as normal tools, LLM tool calls will be translated and passed to the correct agentic tool, if the tool is not already running then it'll be instantiated, its input and output setup, then a signal sent to execute. Outputs from these tool calls will be passed back to main agent as result of running a tool call.
-
-
-## System capabilities
-
-Another core idea is the idea of system capabilities. We'll have 3 classes of system capabilities: 
-1. Core - These are system capabilities which the agent must be started with, for example - a communication manager system capability. I expect that for the most part these will run in the background and remain hidden from both main AI and agentic tools, they'll cordinate messages and manage running sandboxes etc
-2. Internal - These are system capabilities that can be enabled or disabled but its existence should only be known by the main AI agent and never the agentic tools, it is only used by the core to accomplish tasks (e.g if we had a Solana keypair capability)
-3. Regular - These are system capabilities that are available to the main AI, but the agentic tools can also request to use.
-
-### System capability ideas to start:
-
-Core:
-
-- Communication manager: Managers communications between agentic tools and main AI.
-- System manager: Responsible for setting up environments and sandboxes, mounting necessary permissions and capabilities.
-
-Internal:
-
-- Wallet manager: Internal tool for main AI to sign transactions and requests.
-- WebUI - A system capability (planned for long term) to expose setting up the agents and tools from a web interface.
-
-Regular:
-
-- File Manager: Responsible for writing to disk outside of the sandbox
-- Network manager: Responsible for managing networks.
+| Feature | Notes |
+|---|---|
+| Permission request system | Tools can output `"type": "request"` — not yet handled by the agent; planned for a future capability |
+| File manager capability | `FSBinds` field exists in `SandboxPolicy`; no capability wires it up yet |
+| Web UI | Planned long-term; listed as an Internal capability |
+| Signal-based IPC | Original design used file directories + signal channel; simplified to direct stdin/stdout. May revisit for long-running tools |
+| LLM env vars in sandboxed agent | Provider keys from `config.providers` are available to tools but not currently forwarded as env vars into the outer agent sandbox itself |
