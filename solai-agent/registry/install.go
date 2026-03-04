@@ -17,6 +17,9 @@ import (
 // httpClient is used for all GitHub API and asset download requests.
 var httpClient = &http.Client{Timeout: 5 * time.Minute}
 
+// githubAPIBase is the GitHub API root, overridable in tests.
+var githubAPIBase = "https://api.github.com"
+
 // githubAsset is one entry from a GitHub release's assets list.
 type githubAsset struct {
 	Name               string `json:"name"`
@@ -133,9 +136,9 @@ func parseRef(ref string) (owner, repo, tag string) {
 func fetchRelease(owner, repo, tag string) (githubRelease, error) {
 	var url string
 	if tag == "" {
-		url = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+		url = fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, owner, repo)
 	} else {
-		url = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/tags/%s", owner, repo, tag)
+		url = fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s", githubAPIBase, owner, repo, tag)
 	}
 
 	resp, err := httpClient.Get(url)
