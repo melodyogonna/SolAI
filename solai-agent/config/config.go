@@ -12,7 +12,7 @@ import (
 // SolaiConfig is the top-level configuration stored in ~/.solai/config.json.
 type SolaiConfig struct {
 	Model         ModelConfig       `json:"model"`
-	Providers     map[string]string `json:"providers"`    // google/openai/anthropic → api key
+	Providers     map[string]string `json:"providers"` // google/openai/anthropic → api key
 	WalletSeed    string            `json:"wallet_seed"`
 	CycleInterval string            `json:"cycle_interval"`
 	UserGoals     string            `json:"user_goals"`
@@ -48,6 +48,7 @@ func Dir() string {
 
 // ToolsDir returns the ~/.solai/tools directory path.
 func ToolsDir() string {
+	// AI! tools dir whould be created if it does not already exist
 	return filepath.Join(Dir(), "tools")
 }
 
@@ -91,7 +92,7 @@ func Load() (*SolaiConfig, error) {
 
 // Save writes the config atomically (temp file + rename) to ~/.solai/config.json.
 func (c *SolaiConfig) Save() error {
-	if err := os.MkdirAll(Dir(), 0700); err != nil {
+	if err := os.MkdirAll(Dir(), 0o700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 	data, err := json.MarshalIndent(c, "", "  ")
@@ -99,7 +100,7 @@ func (c *SolaiConfig) Save() error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 	tmp := ConfigPath() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("writing temp config: %w", err)
 	}
 	if err := os.Rename(tmp, ConfigPath()); err != nil {
