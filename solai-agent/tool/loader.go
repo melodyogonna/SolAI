@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/melodyogonna/solai/solai-agent/capability"
+	solaiconfig "github.com/melodyogonna/solai/solai-agent/config"
 	"github.com/tmc/langchaingo/tools"
 )
 
@@ -30,7 +31,7 @@ import (
 //   - []tools.Tool: successfully loaded tools (may be empty if none found)
 //   - []error: one warning per tool that failed to load or was disabled
 //   - error: fatal only if toolsDir itself cannot be read
-func LoadTools(toolsDir string, provider *capability.LLMProvider, checker capability.CapabilityChecker, bwrapPath string) ([]tools.Tool, []error, error) {
+func LoadTools(toolsDir string, provider *capability.LLMProvider, checker capability.CapabilityChecker, bwrapPath string, cfg *solaiconfig.SolaiConfig) ([]tools.Tool, []error, error) {
 	entries, err := os.ReadDir(toolsDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading tools directory %s: %w", toolsDir, err)
@@ -87,7 +88,14 @@ func LoadTools(toolsDir string, provider *capability.LLMProvider, checker capabi
 			continue
 		}
 
-		loaded = append(loaded, NewAgenticTool(manifest, toolDir, llmCfg, policy))
+		// Resolve and validate declared env vars.
+		toolEnv, envWarning := resolveToolEnv(manifest, cfg)
+		if envWarning != nil {
+			warnings = append(warnings, fmt.Errorf("tool %q disabled: %w", manifest.Name, envWarning))
+			continue
+		}
+
+		loaded = append(loaded, NewAgenticTool(manifest, toolDir, llmCfg, policy, toolEnv))
 	}
 
 	return loaded, warnings, nil
@@ -112,6 +120,31 @@ func buildSandboxPolicy(manifest Manifest, checker capability.CapabilityChecker,
 	}
 
 	return policy, nil
+}
+
+// resolveToolEnv builds the "KEY=VALUE" env slice for a tool from the agent config.
+// Returns an error if any required env var has no configured value.
+func resolveToolEnv(manifest Manifest, cfg *solaiconfig.SolaiConfig) ([]string, error) {
+	if len(manifest.Env) == 0 {
+		return nil, nil
+	}
+	var configured map[string]string
+	if cfg != nil && cfg.ToolEnv != nil {
+		configured = cfg.ToolEnv[manifest.Name]
+	}
+	var env []string
+	for _, decl := range manifest.Env {
+		val := configured[decl.Name]
+		if val == "" && decl.Required {
+			return nil, fmt.Errorf(
+				"required env var %q is not set (run: solai config set tool-env.%s.%s <value>)",
+				decl.Name, manifest.Name, decl.Name)
+		}
+		if val != "" {
+			env = append(env, decl.Name+"="+val)
+		}
+	}
+	return env, nil
 }
 
 // joinProviders formats a ManifestLLMModel slice as a readable list of

@@ -26,6 +26,9 @@ type AgenticTool struct {
 	// sandboxPolicy is the resolved sandbox isolation policy for this tool,
 	// built from required_capabilities in the manifest at load time.
 	sandboxPolicy SandboxPolicy
+	// toolEnv holds "KEY=VALUE" pairs from the tool's declared env vars,
+	// sourced from the agent config at load time.
+	toolEnv       []string
 }
 
 // NewAgenticTool constructs an AgenticTool from a manifest, its directory,
@@ -34,7 +37,7 @@ type AgenticTool struct {
 //
 // The per-tool timeout is taken from manifest.Timeout if set and parseable;
 // otherwise DefaultToolTimeout is used.
-func NewAgenticTool(manifest Manifest, dir string, llmCfg *capability.LLMConfig, policy SandboxPolicy) *AgenticTool {
+func NewAgenticTool(manifest Manifest, dir string, llmCfg *capability.LLMConfig, policy SandboxPolicy, toolEnv []string) *AgenticTool {
 	timeout := DefaultToolTimeout
 	if manifest.Timeout != "" {
 		if d, err := time.ParseDuration(manifest.Timeout); err == nil && d > 0 {
@@ -47,6 +50,7 @@ func NewAgenticTool(manifest Manifest, dir string, llmCfg *capability.LLMConfig,
 		timeout:       timeout,
 		llmCfg:        llmCfg,
 		sandboxPolicy: policy,
+		toolEnv:       toolEnv,
 	}
 }
 
@@ -74,9 +78,9 @@ func (t *AgenticTool) Description() string {
 func (t *AgenticTool) Call(ctx context.Context, input string) (string, error) {
 	taskInput := parseTaskInput(input)
 
-	var extraEnv []string
+	extraEnv := append([]string(nil), t.toolEnv...)
 	if t.llmCfg != nil {
-		extraEnv = t.llmCfg.Env()
+		extraEnv = append(extraEnv, t.llmCfg.Env()...)
 	}
 	output, err := RunTool(ctx, t.dir, t.manifest.Executable, taskInput, t.timeout, extraEnv, t.sandboxPolicy)
 	if err != nil {

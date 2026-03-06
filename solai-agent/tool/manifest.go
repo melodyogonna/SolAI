@@ -28,6 +28,18 @@ type LLMOptions struct {
 	Supported []ManifestLLMModel `json:"supported"`
 }
 
+// EnvVar declares a single environment variable a tool requires at runtime.
+type EnvVar struct {
+	// Name is the environment variable name, e.g. "BIRDEYE_API_KEY".
+	Name string `json:"name"`
+
+	// Sensitive marks the value as secret — it will be redacted in config list output.
+	Sensitive bool `json:"sensitive"`
+
+	// Required causes the agent to refuse to load the tool if the value is not set.
+	Required bool `json:"required"`
+}
+
 // Manifest represents the contents of a tool's manifest.json file.
 // Every agentic tool directory must contain one.
 type Manifest struct {
@@ -60,6 +72,10 @@ type Manifest struct {
 	// tool invocation may run before it is killed. Defaults to DefaultToolTimeout
 	// when absent or unparseable.
 	Timeout string `json:"timeout,omitempty"`
+
+	// Env declares environment variables the tool needs at runtime.
+	// Values are sourced from the agent config (tool-env.<name>.<VAR>).
+	Env []EnvVar `json:"env,omitempty"`
 }
 
 // LoadManifest reads and JSON-decodes the manifest.json at the given file path.

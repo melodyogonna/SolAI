@@ -36,7 +36,10 @@ Agent settings:
 
 Solana settings:
   solana.rpc-url       Solana RPC endpoint (default: mainnet-beta)
-  solana.commitment    Commitment level: finalized, confirmed, or processed`,
+  solana.commitment    Commitment level: finalized, confirmed, or processed
+
+Tool environment variables:
+  tool-env.<tool>.<VAR>  Set an env var for a specific tool (e.g. tool-env.birdeye.BIRDEYE_API_KEY)`,
 	Args: cobra.ExactArgs(2),
 	RunE: runConfigSet,
 }
@@ -105,15 +108,24 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		providers[k] = redact(v)
 	}
 
+	toolEnv := make(map[string]map[string]string)
+	for toolName, vars := range cfg.ToolEnv {
+		redacted := make(map[string]string, len(vars))
+		for k, v := range vars {
+			redacted[k] = redact(v)
+		}
+		toolEnv[toolName] = redacted
+	}
+
 	display := map[string]any{
 		"model": map[string]any{
 			"provider": cfg.Model.Provider,
 			"name":     cfg.Model.Name,
 		},
-		"providers":      providers,
-		"user_goals":     cfg.UserGoals,
+		"providers":     providers,
+		"user_goals":    cfg.UserGoals,
 		"cycle_timeout": cfg.CycleTimeout,
-		"wallet_seed":    redact(cfg.WalletSeed),
+		"wallet_seed":   redact(cfg.WalletSeed),
 		"sandbox": map[string]any{
 			"share_net":   cfg.Sandbox.ShareNet,
 			"extra_binds": cfg.Sandbox.ExtraBinds,
@@ -122,6 +134,7 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 			"rpc_url":    cfg.Solana.RPCURL,
 			"commitment": cfg.Solana.Commitment,
 		},
+		"tool_env": toolEnv,
 	}
 
 	data, err := json.MarshalIndent(display, "", "  ")

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/melodyogonna/solai/solai-agent/capability"
+	solaiconfig "github.com/melodyogonna/solai/solai-agent/config"
 )
 
 // fakeChecker is a CapabilityChecker that reports available capability names.
@@ -54,7 +55,7 @@ func validManifestJSON(name string) string {
 func TestLoadTools_EmptyDir(t *testing.T) {
 	toolsDir := t.TempDir()
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "")
+	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -68,7 +69,7 @@ func TestLoadTools_EmptyDir(t *testing.T) {
 
 func TestLoadTools_InvalidDir(t *testing.T) {
 	provider := capability.NewLLMProviderFromMap(nil)
-	_, _, err := LoadTools("/nonexistent/tools/dir", provider, newChecker(), "")
+	_, _, err := LoadTools("/nonexistent/tools/dir", provider, newChecker(), "", nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent directory")
 	}
@@ -79,7 +80,7 @@ func TestLoadTools_ValidTool_NoLLM(t *testing.T) {
 	setupTool(t, toolsDir, "my-tool", validManifestJSON("my-tool"))
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "")
+	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -100,7 +101,7 @@ func TestLoadTools_MultipleTools(t *testing.T) {
 	setupTool(t, toolsDir, "tool-b", validManifestJSON("tool-b"))
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, _, err := LoadTools(toolsDir, provider, newChecker(), "")
+	tools, _, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -117,7 +118,7 @@ func TestLoadTools_MissingManifest_Warning(t *testing.T) {
 	}
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "")
+	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -140,7 +141,7 @@ func TestLoadTools_InvalidManifest_Warning(t *testing.T) {
 	}
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	_, warnings, err := LoadTools(toolsDir, provider, newChecker(), "")
+	_, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestLoadTools_MissingExecutable_Warning(t *testing.T) {
 	}
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "")
+	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -191,7 +192,7 @@ func TestLoadTools_LLMOptions_ProviderConfigured(t *testing.T) {
 	setupTool(t, toolsDir, "llm-tool", manifest)
 
 	provider := capability.NewLLMProviderFromMap(map[string]string{"google": "gkey"})
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "")
+	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -218,7 +219,7 @@ func TestLoadTools_LLMOptions_NoProviderConfigured_Warning(t *testing.T) {
 	setupTool(t, toolsDir, "llm-tool", manifest)
 
 	provider := capability.NewLLMProviderFromMap(nil) // no providers configured
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "")
+	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -245,7 +246,7 @@ func TestLoadTools_RequiredCapability_Available(t *testing.T) {
 
 	provider := capability.NewLLMProviderFromMap(nil)
 	checker := newChecker("network-manager")
-	tools, warnings, err := LoadTools(toolsDir, provider, checker, "")
+	tools, warnings, err := LoadTools(toolsDir, provider, checker, "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -270,7 +271,7 @@ func TestLoadTools_RequiredCapability_Missing_Warning(t *testing.T) {
 
 	provider := capability.NewLLMProviderFromMap(nil)
 	checker := newChecker() // network-manager not available
-	tools, warnings, err := LoadTools(toolsDir, provider, checker, "")
+	tools, warnings, err := LoadTools(toolsDir, provider, checker, "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -340,7 +341,7 @@ func TestLoadTools_SkipsFiles(t *testing.T) {
 	setupTool(t, toolsDir, "real-tool", validManifestJSON("real-tool"))
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, _, err := LoadTools(toolsDir, provider, newChecker(), "")
+	tools, _, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -355,5 +356,161 @@ func TestCurrentArch(t *testing.T) {
 	arch := runtime.GOARCH
 	if arch != "amd64" && arch != "arm64" {
 		t.Logf("running on arch %q — tool binary names use this arch suffix", arch)
+	}
+}
+
+// ---- resolveToolEnv ---------------------------------------------------------
+
+func makeEnvManifest(required, sensitive bool, names ...string) Manifest {
+	vars := make([]EnvVar, len(names))
+	for i, n := range names {
+		vars[i] = EnvVar{Name: n, Required: required, Sensitive: sensitive}
+	}
+	return Manifest{Name: "my-tool", Description: "d", Version: "1.0.0", Executable: "./bin/my-tool", Env: vars}
+}
+
+func cfgWithToolEnv(toolName string, kvs map[string]string) *solaiconfig.SolaiConfig {
+	cfg := solaiconfig.DefaultConfig()
+	for k, v := range kvs {
+		_ = cfg.Set("tool-env."+toolName+"."+k, v)
+	}
+	return cfg
+}
+
+func TestResolveToolEnv_NoEnvDeclared(t *testing.T) {
+	m := Manifest{Name: "my-tool", Description: "d", Version: "1.0.0", Executable: "./bin/my-tool"}
+	env, err := resolveToolEnv(m, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if env != nil {
+		t.Errorf("expected nil, got %v", env)
+	}
+}
+
+func TestResolveToolEnv_RequiredVar_Configured(t *testing.T) {
+	m := makeEnvManifest(true, true, "API_KEY")
+	cfg := cfgWithToolEnv("my-tool", map[string]string{"API_KEY": "secret"})
+	env, err := resolveToolEnv(m, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(env) != 1 || env[0] != "API_KEY=secret" {
+		t.Errorf("got %v, want [API_KEY=secret]", env)
+	}
+}
+
+func TestResolveToolEnv_RequiredVar_Missing_Error(t *testing.T) {
+	m := makeEnvManifest(true, true, "API_KEY")
+	_, err := resolveToolEnv(m, solaiconfig.DefaultConfig())
+	if err == nil {
+		t.Fatal("expected error for missing required var")
+	}
+}
+
+func TestResolveToolEnv_RequiredVar_NilConfig_Error(t *testing.T) {
+	m := makeEnvManifest(true, false, "API_KEY")
+	_, err := resolveToolEnv(m, nil)
+	if err == nil {
+		t.Fatal("expected error when config is nil and var is required")
+	}
+}
+
+func TestResolveToolEnv_OptionalVar_Missing_NoError(t *testing.T) {
+	m := makeEnvManifest(false, false, "OPTIONAL_VAR")
+	env, err := resolveToolEnv(m, solaiconfig.DefaultConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(env) != 0 {
+		t.Errorf("expected empty env, got %v", env)
+	}
+}
+
+func TestResolveToolEnv_SensitiveVar_Included(t *testing.T) {
+	// sensitive=true is metadata only; the value should still be injected
+	m := makeEnvManifest(false, true, "SECRET_KEY")
+	cfg := cfgWithToolEnv("my-tool", map[string]string{"SECRET_KEY": "topsecret"})
+	env, err := resolveToolEnv(m, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(env) != 1 || env[0] != "SECRET_KEY=topsecret" {
+		t.Errorf("got %v", env)
+	}
+}
+
+func TestResolveToolEnv_MultipleVars_MixedRequiredness(t *testing.T) {
+	m := Manifest{
+		Name: "my-tool", Description: "d", Version: "1.0.0", Executable: "./bin/my-tool",
+		Env: []EnvVar{
+			{Name: "REQUIRED_KEY", Required: true},
+			{Name: "OPTIONAL_KEY", Required: false},
+		},
+	}
+	cfg := cfgWithToolEnv("my-tool", map[string]string{"REQUIRED_KEY": "req-val"})
+	env, err := resolveToolEnv(m, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(env) != 1 || env[0] != "REQUIRED_KEY=req-val" {
+		t.Errorf("got %v, want [REQUIRED_KEY=req-val]", env)
+	}
+}
+
+// ---- LoadTools env integration ----------------------------------------------
+
+func TestLoadTools_RequiredEnvVar_Missing_Warning(t *testing.T) {
+	toolsDir := t.TempDir()
+	manifest := `{"name":"api-tool","description":"d","version":"1.0.0","executable":"./bin/api-tool","env":[{"name":"API_KEY","required":true,"sensitive":true}]}`
+	setupTool(t, toolsDir, "api-tool", manifest)
+
+	provider := capability.NewLLMProviderFromMap(nil)
+	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", solaiconfig.DefaultConfig())
+	if err != nil {
+		t.Fatalf("LoadTools: %v", err)
+	}
+	if len(tools) != 0 {
+		t.Errorf("expected 0 tools (disabled), got %d", len(tools))
+	}
+	if len(warnings) != 1 {
+		t.Errorf("expected 1 warning, got %d: %v", len(warnings), warnings)
+	}
+}
+
+func TestLoadTools_RequiredEnvVar_Configured_Loads(t *testing.T) {
+	toolsDir := t.TempDir()
+	manifest := `{"name":"api-tool","description":"d","version":"1.0.0","executable":"./bin/api-tool","env":[{"name":"API_KEY","required":true,"sensitive":true}]}`
+	setupTool(t, toolsDir, "api-tool", manifest)
+
+	cfg := cfgWithToolEnv("api-tool", map[string]string{"API_KEY": "secret"})
+	provider := capability.NewLLMProviderFromMap(nil)
+	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", cfg)
+	if err != nil {
+		t.Fatalf("LoadTools: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
+	}
+	if len(tools) != 1 {
+		t.Errorf("expected 1 tool, got %d", len(tools))
+	}
+}
+
+func TestLoadTools_OptionalEnvVar_Missing_Loads(t *testing.T) {
+	toolsDir := t.TempDir()
+	manifest := `{"name":"opt-tool","description":"d","version":"1.0.0","executable":"./bin/opt-tool","env":[{"name":"OPT_KEY","required":false}]}`
+	setupTool(t, toolsDir, "opt-tool", manifest)
+
+	provider := capability.NewLLMProviderFromMap(nil)
+	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", solaiconfig.DefaultConfig())
+	if err != nil {
+		t.Fatalf("LoadTools: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
+	}
+	if len(tools) != 1 {
+		t.Errorf("expected 1 tool, got %d", len(tools))
 	}
 }
