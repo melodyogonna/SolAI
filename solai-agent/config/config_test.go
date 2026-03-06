@@ -362,3 +362,117 @@ func TestConfigPath_IsJSONFile(t *testing.T) {
 		t.Error("ConfigPath() should be inside Dir()")
 	}
 }
+
+// ---- tool-env Set / Get / ToolEnvFor --------------------------------------
+
+func TestSet_ToolEnv(t *testing.T) {
+	cfg := DefaultConfig()
+	if err := cfg.Set("tool-env.birdeye.BIRDEYE_API_KEY", "secret123"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ToolEnv["birdeye"]["BIRDEYE_API_KEY"] != "secret123" {
+		t.Errorf("got %q, want %q", cfg.ToolEnv["birdeye"]["BIRDEYE_API_KEY"], "secret123")
+	}
+}
+
+func TestSet_ToolEnv_MultipleTools(t *testing.T) {
+	cfg := DefaultConfig()
+	_ = cfg.Set("tool-env.birdeye.BIRDEYE_API_KEY", "abc")
+	_ = cfg.Set("tool-env.jupiter.JUPITER_KEY", "xyz")
+	if cfg.ToolEnv["birdeye"]["BIRDEYE_API_KEY"] != "abc" {
+		t.Error("birdeye key not set")
+	}
+	if cfg.ToolEnv["jupiter"]["JUPITER_KEY"] != "xyz" {
+		t.Error("jupiter key not set")
+	}
+}
+
+func TestSet_ToolEnv_MalformedKey_MissingVar(t *testing.T) {
+	cfg := DefaultConfig()
+	if err := cfg.Set("tool-env.birdeye.", "val"); err == nil {
+		t.Fatal("expected error for missing var name")
+	}
+}
+
+func TestSet_ToolEnv_MalformedKey_MissingTool(t *testing.T) {
+	cfg := DefaultConfig()
+	if err := cfg.Set("tool-env..SOME_VAR", "val"); err == nil {
+		t.Fatal("expected error for missing tool name")
+	}
+}
+
+func TestGet_ToolEnv(t *testing.T) {
+	cfg := DefaultConfig()
+	_ = cfg.Set("tool-env.birdeye.BIRDEYE_API_KEY", "secret123")
+	val, err := cfg.Get("tool-env.birdeye.BIRDEYE_API_KEY")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "secret123" {
+		t.Errorf("got %q, want %q", val, "secret123")
+	}
+}
+
+func TestGet_ToolEnv_MissingVar_ReturnsEmpty(t *testing.T) {
+	cfg := DefaultConfig()
+	val, err := cfg.Get("tool-env.birdeye.BIRDEYE_API_KEY")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "" {
+		t.Errorf("expected empty string, got %q", val)
+	}
+}
+
+func TestToolEnvFor_ReturnsKeyValuePairs(t *testing.T) {
+	cfg := DefaultConfig()
+	_ = cfg.Set("tool-env.birdeye.BIRDEYE_API_KEY", "abc123")
+	_ = cfg.Set("tool-env.birdeye.BIRDEYE_BASE_URL", "https://example.com")
+
+	env := cfg.ToolEnvFor("birdeye")
+	if len(env) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %v", len(env), env)
+	}
+	envMap := make(map[string]string)
+	for _, kv := range env {
+		parts := strings.SplitN(kv, "=", 2)
+		envMap[parts[0]] = parts[1]
+	}
+	if envMap["BIRDEYE_API_KEY"] != "abc123" {
+		t.Errorf("BIRDEYE_API_KEY: got %q", envMap["BIRDEYE_API_KEY"])
+	}
+	if envMap["BIRDEYE_BASE_URL"] != "https://example.com" {
+		t.Errorf("BIRDEYE_BASE_URL: got %q", envMap["BIRDEYE_BASE_URL"])
+	}
+}
+
+func TestToolEnvFor_UnknownTool_ReturnsNil(t *testing.T) {
+	cfg := DefaultConfig()
+	if env := cfg.ToolEnvFor("no-such-tool"); env != nil {
+		t.Errorf("expected nil, got %v", env)
+	}
+}
+
+func TestToolEnvFor_NilToolEnv_ReturnsNil(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ToolEnv = nil
+	if env := cfg.ToolEnvFor("birdeye"); env != nil {
+		t.Errorf("expected nil for nil ToolEnv, got %v", env)
+	}
+}
+
+func TestSave_Load_ToolEnv_RoundTrip(t *testing.T) {
+	useTempHome(t)
+	cfg := DefaultConfig()
+	_ = cfg.Set("tool-env.birdeye.BIRDEYE_API_KEY", "secret")
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.ToolEnv["birdeye"]["BIRDEYE_API_KEY"] != "secret" {
+		t.Errorf("round-trip: got %q, want %q", loaded.ToolEnv["birdeye"]["BIRDEYE_API_KEY"], "secret")
+	}
+}

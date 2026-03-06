@@ -92,7 +92,7 @@ func LoadConfig() (Config, error) {
 
 	llmProvider := capability.NewLLMProvider()
 	loader := func(bwrapPath string, checker capability.CapabilityChecker) ([]lctools.Tool, []error, error) {
-		return tool.LoadTools(toolsDir, llmProvider, checker, bwrapPath)
+		return tool.LoadTools(toolsDir, llmProvider, checker, bwrapPath, nil)
 	}
 	systemManager := capability.NewSystemManager(loader, llmProvider)
 
@@ -130,7 +130,7 @@ func LoadConfigFrom(cfg *solaiconfig.SolaiConfig, toolsDir, systemPrompt string)
 
 	llmProvider := capability.NewLLMProviderFromMap(cfg.Providers)
 	loader := func(bwrapPath string, checker capability.CapabilityChecker) ([]lctools.Tool, []error, error) {
-		return tool.LoadTools(toolsDir, llmProvider, checker, bwrapPath)
+		return tool.LoadTools(toolsDir, llmProvider, checker, bwrapPath, cfg)
 	}
 	systemManager := capability.NewSystemManager(loader, llmProvider)
 

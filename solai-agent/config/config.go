@@ -11,13 +11,14 @@ import (
 
 // SolaiConfig is the top-level configuration stored in ~/.solai/config.json.
 type SolaiConfig struct {
-	Model         ModelConfig       `json:"model"`
-	Providers     map[string]string `json:"providers"` // google/openai/anthropic → api key
-	WalletSeed    string            `json:"wallet_seed"`
-	CycleTimeout string            `json:"cycle_timeout"`
-	UserGoals     string            `json:"user_goals"`
-	Sandbox       SandboxConfig     `json:"sandbox"`
-	Solana        SolanaConfig      `json:"solana"`
+	Model         ModelConfig                  `json:"model"`
+	Providers     map[string]string            `json:"providers"` // google/openai/anthropic → api key
+	WalletSeed    string                       `json:"wallet_seed"`
+	CycleTimeout  string                       `json:"cycle_timeout"`
+	UserGoals     string                       `json:"user_goals"`
+	Sandbox       SandboxConfig                `json:"sandbox"`
+	Solana        SolanaConfig                 `json:"solana"`
+	ToolEnv       map[string]map[string]string `json:"tool_env,omitempty"` // tool name → var name → value
 }
 
 // SolanaConfig controls how the agent interacts with the Solana blockchain.
@@ -167,7 +168,18 @@ func (c *SolaiConfig) Set(key, value string) error {
 			return fmt.Errorf("solana.commitment: expected finalized/confirmed/processed, got %q", value)
 		}
 	default:
-		return fmt.Errorf("unknown config key %q; valid keys: model.provider, model.name, provider.google, provider.openai, provider.anthropic, wallet-seed, cycle-timeout, user-goals, sandbox.share-net, solana.rpc-url, solana.commitment", key)
+		// Dynamic key: tool-env.<toolname>.<VAR_NAME>
+		if rest, ok := strings.CutPrefix(key, "tool-env."); ok {
+			dot := strings.IndexByte(rest, '.')
+			if dot < 1 || dot == len(rest)-1 {
+				return fmt.Errorf("tool-env key must be tool-env.<tool>.<VAR>, got %q", key)
+			}
+			toolName, varName := rest[:dot], rest[dot+1:]
+			c.ensureToolEnv(toolName)
+			c.ToolEnv[toolName][varName] = value
+			return nil
+		}
+		return fmt.Errorf("unknown config key %q; valid keys: model.provider, model.name, provider.google, provider.openai, provider.anthropic, wallet-seed, cycle-timeout, user-goals, sandbox.share-net, solana.rpc-url, solana.commitment, tool-env.<tool>.<VAR>", key)
 	}
 	return nil
 }
@@ -201,12 +213,49 @@ func (c *SolaiConfig) Get(key string) (string, error) {
 	case "solana.commitment":
 		return c.Solana.Commitment, nil
 	default:
+		if rest, ok := strings.CutPrefix(key, "tool-env."); ok {
+			dot := strings.IndexByte(rest, '.')
+			if dot < 1 || dot == len(rest)-1 {
+				return "", fmt.Errorf("tool-env key must be tool-env.<tool>.<VAR>, got %q", key)
+			}
+			toolName, varName := rest[:dot], rest[dot+1:]
+			if c.ToolEnv == nil {
+				return "", nil
+			}
+			return c.ToolEnv[toolName][varName], nil
+		}
 		return "", fmt.Errorf("unknown config key %q", key)
 	}
+}
+
+// ToolEnvFor returns the configured environment variables for a tool as a
+// "KEY=VALUE" slice ready for injection into a subprocess environment.
+func (c *SolaiConfig) ToolEnvFor(toolName string) []string {
+	if c.ToolEnv == nil {
+		return nil
+	}
+	vars := c.ToolEnv[toolName]
+	if len(vars) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(vars))
+	for k, v := range vars {
+		result = append(result, k+"="+v)
+	}
+	return result
 }
 
 func (c *SolaiConfig) ensureProviders() {
 	if c.Providers == nil {
 		c.Providers = make(map[string]string)
+	}
+}
+
+func (c *SolaiConfig) ensureToolEnv(toolName string) {
+	if c.ToolEnv == nil {
+		c.ToolEnv = make(map[string]map[string]string)
+	}
+	if c.ToolEnv[toolName] == nil {
+		c.ToolEnv[toolName] = make(map[string]string)
 	}
 }
