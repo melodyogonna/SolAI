@@ -43,7 +43,7 @@ __agent-run (inside sandbox)
 
 ## Coordinator Cycle Loop
 
-Every `cycle_interval` (default 5m):
+Cycles run back-to-back with no sleep between them. Each cycle has a `cycle_timeout` (default 5m) after which it is cancelled and a new one starts immediately.
 
 ```
 SystemManager.Setup()
@@ -54,13 +54,12 @@ SystemManager.Setup()
 buildCyclePrompt()
   └─ Append capability context (e.g. wallet public key) to user goals
 
-runCycle()  [OneShotAgent, max 10 iterations]
+runCycle()  [OneShotAgent, max 10 iterations, exponential retry up to 3×]
   └─ ReAct: Reason → pick subagent → formulate prompt → Act → Observe result → repeat
   └─ Each "Act" spawns a subagent process: writes ToolInput to stdin, reads ToolOutput from stdout
-  └─ On ErrNotFinished: log warning, continue to next cycle
-  └─ On timeout (2× cycle_interval): log warning, continue
-
-Sleep cycle_interval (or wake early on SIGINT/SIGTERM)
+  └─ On transient error (e.g. LLM rate limit): retry with 2s→30s exponential backoff
+  └─ On ErrNotFinished: log warning, no retry, continue to next cycle
+  └─ On cycle_timeout: log warning, continue to next cycle
 ```
 
 ---
@@ -77,16 +76,6 @@ Agentic tools are **LLM subagents** — each one wraps a specific capability (a 
 4. Returns a structured result to the coordinator
 
 This means the coordinator never needs to know the details of how a capability works — it just describes what it wants accomplished and the subagent figures out how.
-
-```
-Main coordinator (user-configured LLM)
-  ├─ "Get me the current SOL price" → token-price subagent
-  │     └─ internal LLM → calls Jupiter price API → returns { price_usd: 142.50 }
-  ├─ "What is the balance at address XYZ?" → solana-balance subagent
-  │     └─ internal LLM → calls Solana RPC getBalance → returns { balance: 4.2 }
-  └─ "Swap 1 SOL for USDC" → swap-executor subagent
-        └─ internal LLM → builds Jupiter swap tx → signs → submits → returns tx sig
-```
 
 Agentic tools are standalone executables (any language) distributed as GitHub releases. Each has a subdirectory under `~/.solai/tools/`:
 
@@ -135,11 +124,15 @@ bwrap --unshare-all
 
 ```json
 {
-  "name": "token-price",
-  "description": "Fetches USD prices for Solana tokens from Jupiter.",
+  "name": "<tool-name>",
+  "description": "What this tool does.",
   "version": "1.0.0",
-  "executable": "./bin/token-price",
+  "executable": "./bin/<tool-name>",
   "required_capabilities": ["network-manager"],
+  "env": [
+    { "name": "SOME_API_KEY", "sensitive": true,  "required": true  },
+    { "name": "SOME_BASE_URL", "sensitive": false, "required": false }
+  ],
   "llm_options": {
     "primary": "gemini-2.5-pro",
     "supported": [
@@ -152,16 +145,31 @@ bwrap --unshare-all
 
 `llm_options` is required for any tool that uses an internal LLM agent (which is the expected pattern). The coordinator resolves credentials from `config.providers` and injects `SOLAI_LLM_PROVIDER`, `SOLAI_LLM_MODEL`, and `SOLAI_LLM_API_KEY` into the subagent's environment. Tools that are purely deterministic (no reasoning required) may omit `llm_options`.
 
+`env` declares runtime variables the tool needs. Values are set via `solai config set tool-env.<tool>.<VAR> <value>` and injected into the tool's environment at runtime. `sensitive: true` causes the value to be redacted in `config list` output. `required: true` causes the agent to refuse to load the tool if the value is missing.
+
 ### Tool installation
 
 ```
-solai install owner/repo[@tag]
+solai install <name[@tag]>          — curated registry (index.json hosted on GitHub)
+solai install owner/repo[@tag]      — direct GitHub release install
+solai uninstall <name>              — remove installed tool
+
+Short-name path:
+  └─ Fetch registry/index.json from GitHub
+  └─ Resolve name → versioned asset URLs
+  └─ Download manifest.json, binary, verify SHA256 against checksums.txt (if present)
+  └─ Write to ~/.solai/tools/{name}/
+
+GitHub path:
   └─ GET github.com/repos/{owner}/{repo}/releases/{latest|tag}
-  └─ Download manifest.json → parse tool name
+  └─ Download manifest.json → validate name, description, executable fields
   └─ Download {name}-linux-{amd64|arm64}
   └─ Verify SHA256 against checksums.txt (if present)
   └─ Write to ~/.solai/tools/{name}/manifest.json
   └─ Write to ~/.solai/tools/{name}/bin/{name} (chmod 0755)
+
+Both paths: abort early if the tool is already installed.
+Tool name from remote manifest is validated against [a-z0-9][a-z0-9-]* before any file operations.
 ```
 
 ---
@@ -173,15 +181,15 @@ Capabilities are system-level features registered at startup. They are not LLM t
 | Class | Visible to | Purpose |
 |---|---|---|
 | `Core` | Nobody | Background infrastructure (SystemManager) |
-| `Internal` | Main LLM only | Inform the agent about itself (e.g. wallet public key in prompt) |
-| `Regular` | Main LLM + tools | Grant sandbox permissions to tools that request them |
+| `Internal` | Main LLM as callable tool + cycle prompt | Inform the agent about itself; also callable by the LLM as a tool |
+| `Regular` | Tool sandbox layer | Grant sandbox permissions to tools that request them |
 
 ### Implemented capabilities
 
 | Name | Class | Effect |
 |---|---|---|
 | `system-manager` | Core | Owns tool loading, LLM provider logging, cleanup jobs, sandbox extraction |
-| `wallet` | Internal | Derives ed25519 keypair from BIP39 seed; exposes public key in cycle prompt |
+| `wallet` | Internal | Derives ed25519 keypair from BIP39 seed; callable by the LLM to retrieve the wallet public address |
 | `network-manager` | Regular | Grants `--share-net` to tool sandboxes that declare it |
 
 ### Planned capabilities
@@ -209,11 +217,16 @@ Stored in `~/.solai/config.json`. Managed via `solai config set/get/list`.
     "anthropic": ""
   },
   "wallet_seed": "",
-  "cycle_interval": "5m",
+  "cycle_timeout": "5m",
   "user_goals": "",
   "sandbox": {
     "share_net": true,
     "extra_binds": []
+  },
+  "tool_env": {
+    "<tool-name>": {
+      "VAR_NAME": "value"
+    }
   }
 }
 ```
@@ -222,7 +235,26 @@ Stored in `~/.solai/config.json`. Managed via `solai config set/get/list`.
 
 `providers` holds credentials for all configured providers. The coordinator uses `providers[model.provider]`. Agentic tools draw from this map independently — a tool whose `llm_options.primary` is `openai` will use `providers.openai` even if the coordinator is configured for Google. This lets the coordinator and tools use different models.
 
+`cycle_timeout` caps the duration of a single coordinator cycle (default 5m). There is no sleep between cycles.
+
+`tool_env` holds per-tool runtime variables declared in the tool's `env` manifest field. Set via `solai config set tool-env.<tool>.<VAR> <value>`. Sensitive values are redacted in `config list`.
+
 `sandbox.extra_binds` accepts `[{"path": "/host/path", "read_only": true}]` entries that are bind-mounted into the agent sandbox (not tool sandboxes — use `file-manager` for that).
+
+---
+
+## Shared modules
+
+| Module | Purpose |
+|---|---|
+| `ratelimit` | `RateLimitStrategy` and `RetryStrategy` interfaces + implementations. Used by the agent (exponential retry on LLM calls) and by tools (fixed-window rate limiting for external APIs). |
+
+### Implementations
+
+| Type | Struct | Parameters |
+|---|---|---|
+| Rate limit | `FixedWindowLimiter` | `limit int`, `window time.Duration` — at most N calls per window |
+| Retry | `ExponentialRetry` | `maxAttempts`, `initialDelay`, `maxDelay`, `multiplier` — backs off exponentially, respects context cancellation |
 
 ---
 
