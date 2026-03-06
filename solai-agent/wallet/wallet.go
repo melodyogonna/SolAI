@@ -62,7 +62,3 @@ func CreateWallet(phrase string) (SolKeyPair, error) {
 
 	return wallet, nil
 }
-
-func SignTransaction() {}
-
-func VerifyTransaction() {}
