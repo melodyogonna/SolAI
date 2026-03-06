@@ -9,19 +9,23 @@ import (
 )
 
 var installCmd = &cobra.Command{
-	Use:   "install <owner/repo[@tag]>",
-	Short: "Install a tool from a GitHub release",
-	Long: `Install downloads a tool from a GitHub release into ~/.solai/tools/.
+	Use:   "install <name[@tag] | owner/repo[@tag]>",
+	Short: "Install a tool from the registry or a GitHub release",
+	Long: `Install downloads a tool into ~/.solai/tools/.
+
+Short names are resolved via the curated registry index:
+  solai install token-price
+  solai install token-price@v1.0.0
+
+Third-party tools are installed directly from a GitHub release:
+  solai install melodyogonna/my-tool
+  solai install melodyogonna/my-tool@v1.0.0
 
 The release must include:
   manifest.json          — tool manifest (executable must be "./bin/<name>")
   <name>-linux-amd64     — AMD64 binary
   <name>-linux-arm64     — ARM64 binary
-  checksums.txt          — (optional) SHA256 checksums
-
-Examples:
-  solai install melodyogonna/token-price
-  solai install melodyogonna/token-price@v1.0.0`,
+  checksums.txt          — (optional) SHA256 checksums`,
 	Args: cobra.ExactArgs(1),
 	RunE: runInstall,
 }

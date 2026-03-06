@@ -308,9 +308,10 @@ func TestInstall_Success(t *testing.T) {
 	}
 }
 
-func TestInstall_InvalidRef(t *testing.T) {
-	if err := Install("notavalidref", t.TempDir()); err == nil {
-		t.Fatal("expected error for invalid ref")
+func TestInstall_InvalidOwnerRepo(t *testing.T) {
+	// An owner/repo ref with no repo part should fail immediately without network.
+	if err := Install("/missingowner", t.TempDir()); err == nil {
+		t.Fatal("expected error for ref missing owner")
 	}
 }
 
@@ -343,5 +344,208 @@ func TestInstall_NoManifestAsset(t *testing.T) {
 
 	if err := Install("owner/repo", t.TempDir()); err == nil {
 		t.Fatal("expected error when no manifest.json asset")
+	}
+}
+
+func TestInstall_AlreadyInstalled_GitHub(t *testing.T) {
+	const toolName = "test-tool"
+	srv := makeTestServer(t, toolName)
+
+	original := githubAPIBase
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = original })
+
+	toolsDir := t.TempDir()
+	if err := Install("owner/"+toolName, toolsDir); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	err := Install("owner/"+toolName, toolsDir)
+	if err == nil {
+		t.Fatal("expected error on second install, got nil")
+	}
+}
+
+// ---- parseShortRef ----------------------------------------------------------
+
+func TestParseShortRef_NameOnly(t *testing.T) {
+	name, tag := parseShortRef("token-price")
+	if name != "token-price" {
+		t.Errorf("name: got %q, want %q", name, "token-price")
+	}
+	if tag != "" {
+		t.Errorf("tag: got %q, want empty", tag)
+	}
+}
+
+func TestParseShortRef_WithTag(t *testing.T) {
+	name, tag := parseShortRef("token-price@v1.2.3")
+	if name != "token-price" {
+		t.Errorf("name: got %q, want %q", name, "token-price")
+	}
+	if tag != "v1.2.3" {
+		t.Errorf("tag: got %q, want %q", tag, "v1.2.3")
+	}
+}
+
+// ---- IsInstalled ------------------------------------------------------------
+
+func TestIsInstalled_False(t *testing.T) {
+	if IsInstalled("no-such-tool", t.TempDir()) {
+		t.Error("expected false for non-existent tool")
+	}
+}
+
+func TestIsInstalled_True(t *testing.T) {
+	toolsDir := t.TempDir()
+	toolDir := filepath.Join(toolsDir, "my-tool", "bin")
+	if err := os.MkdirAll(toolDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsDir, "my-tool", "manifest.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !IsInstalled("my-tool", toolsDir) {
+		t.Error("expected true for installed tool")
+	}
+}
+
+// ---- installFromIndex -------------------------------------------------------
+
+// makeIndexServer returns a test server that serves the registry index and tool assets.
+func makeIndexServer(t *testing.T, toolName string) *httptest.Server {
+	t.Helper()
+
+	arch := runtime.GOARCH
+	binaryName := fmt.Sprintf("%s-linux-%s", toolName, arch)
+	binaryContent := []byte("fake binary content")
+	manifest := manifestHeader{
+		Name:        toolName,
+		Description: "A test tool",
+		Version:     "1.0.0",
+		Executable:  "./bin/" + toolName,
+	}
+	manifestJSON, _ := json.Marshal(manifest)
+	checksumContent := checksumLine(binaryName, binaryContent)
+
+	mux := http.NewServeMux()
+	var srv *httptest.Server
+
+	mux.HandleFunc("/manifest.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(manifestJSON)
+	})
+	mux.HandleFunc("/"+binaryName, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(binaryContent)
+	})
+	mux.HandleFunc("/checksums.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(checksumContent)
+	})
+	mux.HandleFunc("/index.json", func(w http.ResponseWriter, r *http.Request) {
+		idx := indexFile{
+			Tools: map[string]indexEntry{
+				toolName: {
+					Latest: "v1.0.0",
+					Versions: map[string]indexVersion{
+						"v1.0.0": {
+							Manifest:  srv.URL + "/manifest.json",
+							Checksums: srv.URL + "/checksums.txt",
+							Assets: map[string]string{
+								"linux/" + arch: srv.URL + "/" + binaryName,
+							},
+						},
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(idx)
+	})
+
+	srv = httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestInstallFromIndex_Success(t *testing.T) {
+	const toolName = "idx-tool"
+	srv := makeIndexServer(t, toolName)
+
+	origIndex := indexURL
+	indexURL = srv.URL + "/index.json"
+	t.Cleanup(func() { indexURL = origIndex })
+
+	toolsDir := t.TempDir()
+	if err := Install(toolName, toolsDir); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	manifestPath := filepath.Join(toolsDir, toolName, "manifest.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Errorf("manifest.json not found: %v", err)
+	}
+	binaryPath := filepath.Join(toolsDir, toolName, "bin", toolName)
+	info, err := os.Stat(binaryPath)
+	if err != nil {
+		t.Fatalf("binary not found: %v", err)
+	}
+	if info.Mode()&0111 == 0 {
+		t.Errorf("binary not executable: mode %v", info.Mode())
+	}
+}
+
+func TestInstallFromIndex_WithTag(t *testing.T) {
+	const toolName = "idx-tool"
+	srv := makeIndexServer(t, toolName)
+
+	origIndex := indexURL
+	indexURL = srv.URL + "/index.json"
+	t.Cleanup(func() { indexURL = origIndex })
+
+	toolsDir := t.TempDir()
+	if err := Install(toolName+"@v1.0.0", toolsDir); err != nil {
+		t.Fatalf("Install with tag: %v", err)
+	}
+}
+
+func TestInstallFromIndex_ToolNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(indexFile{Tools: map[string]indexEntry{}})
+	}))
+	t.Cleanup(srv.Close)
+
+	origIndex := indexURL
+	indexURL = srv.URL
+	t.Cleanup(func() { indexURL = origIndex })
+
+	if err := Install("nonexistent", t.TempDir()); err == nil {
+		t.Fatal("expected error for tool not in index")
+	}
+}
+
+func TestInstallFromIndex_UnknownVersion(t *testing.T) {
+	const toolName = "idx-tool"
+	srv := makeIndexServer(t, toolName)
+
+	origIndex := indexURL
+	indexURL = srv.URL + "/index.json"
+	t.Cleanup(func() { indexURL = origIndex })
+
+	if err := Install(toolName+"@v99.0.0", t.TempDir()); err == nil {
+		t.Fatal("expected error for unknown version")
+	}
+}
+
+func TestInstallFromIndex_AlreadyInstalled(t *testing.T) {
+	const toolName = "idx-tool"
+	srv := makeIndexServer(t, toolName)
+
+	origIndex := indexURL
+	indexURL = srv.URL + "/index.json"
+	t.Cleanup(func() { indexURL = origIndex })
+
+	toolsDir := t.TempDir()
+	if err := Install(toolName, toolsDir); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	if err := Install(toolName, toolsDir); err == nil {
+		t.Fatal("expected error on second install, got nil")
 	}
 }

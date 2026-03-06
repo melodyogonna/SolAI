@@ -20,6 +20,27 @@ var httpClient = &http.Client{Timeout: 5 * time.Minute}
 // githubAPIBase is the GitHub API root, overridable in tests.
 var githubAPIBase = "https://api.github.com"
 
+// indexURL is the hosted curated tool registry, overridable in tests.
+var indexURL = "https://raw.githubusercontent.com/melodyogonna/solai/main/registry/index.json"
+
+// indexEntry is one tool entry from the hosted registry index.
+type indexEntry struct {
+	Latest   string                     `json:"latest"`
+	Versions map[string]indexVersion    `json:"versions"`
+}
+
+// indexVersion holds the per-version asset URLs from the registry index.
+type indexVersion struct {
+	Manifest string            `json:"manifest"`
+	Checksums string           `json:"checksums"`
+	Assets   map[string]string `json:"assets"` // "linux/amd64" → download URL
+}
+
+// indexFile is the top-level structure of registry/index.json.
+type indexFile struct {
+	Tools map[string]indexEntry `json:"tools"`
+}
+
 // githubAsset is one entry from a GitHub release's assets list.
 type githubAsset struct {
 	Name               string `json:"name"`
@@ -40,14 +61,98 @@ type manifestHeader struct {
 	Executable  string `json:"executable"`
 }
 
-// Install downloads a tool from a GitHub release and places it in toolsDir.
+// Install downloads a tool and places it in toolsDir.
 //
-// ref is "owner/repo" or "owner/repo@tag". If the tag is omitted the latest
-// release is fetched. The tool binary is written to:
+// ref is one of:
+//   - "name" or "name@tag"         — short name resolved via the curated registry index
+//   - "owner/repo" or "owner/repo@tag" — installed directly from the GitHub release
+//
+// The tool binary is written to:
 //
 //	toolsDir/<name>/bin/<name>   (chmod 0755)
 //	toolsDir/<name>/manifest.json
 func Install(ref, toolsDir string) error {
+	if strings.Contains(ref, "/") {
+		return installFromGitHub(ref, toolsDir)
+	}
+	return installFromIndex(ref, toolsDir)
+}
+
+// IsInstalled reports whether a tool with the given name is already installed in toolsDir.
+func IsInstalled(name, toolsDir string) bool {
+	_, err := os.Stat(filepath.Join(toolsDir, name, "manifest.json"))
+	return err == nil
+}
+
+// installFromIndex resolves a short tool name via the hosted registry index and installs it.
+func installFromIndex(ref, toolsDir string) error {
+	name, tag := parseShortRef(ref)
+
+	if IsInstalled(name, toolsDir) {
+		return fmt.Errorf("tool %q is already installed (run: solai uninstall %s to remove it first)", name, name)
+	}
+
+	indexData, err := downloadAsset(indexURL)
+	if err != nil {
+		return fmt.Errorf("fetching registry index: %w", err)
+	}
+	var idx indexFile
+	if err := json.Unmarshal(indexData, &idx); err != nil {
+		return fmt.Errorf("parsing registry index: %w", err)
+	}
+
+	entry, ok := idx.Tools[name]
+	if !ok {
+		return fmt.Errorf("tool %q not found in registry (use owner/repo for third-party tools)", name)
+	}
+
+	if tag == "" {
+		tag = entry.Latest
+	}
+	ver, ok := entry.Versions[tag]
+	if !ok {
+		return fmt.Errorf("tool %q has no version %q in registry", name, tag)
+	}
+
+	platform := "linux/" + runtime.GOARCH
+	binaryURL, ok := ver.Assets[platform]
+	if !ok {
+		return fmt.Errorf("tool %q@%s has no binary for %s", name, tag, platform)
+	}
+	binaryName := fmt.Sprintf("%s-linux-%s", name, runtime.GOARCH)
+
+	manifestData, err := downloadAsset(ver.Manifest)
+	if err != nil {
+		return fmt.Errorf("downloading manifest.json: %w", err)
+	}
+	var m manifestHeader
+	if err := json.Unmarshal(manifestData, &m); err != nil {
+		return fmt.Errorf("parsing manifest.json: %w", err)
+	}
+	if err := validateManifest(m); err != nil {
+		return fmt.Errorf("invalid manifest: %w", err)
+	}
+
+	binaryData, err := downloadAsset(binaryURL)
+	if err != nil {
+		return fmt.Errorf("downloading binary: %w", err)
+	}
+
+	if ver.Checksums != "" {
+		checksumData, err := downloadAsset(ver.Checksums)
+		if err != nil {
+			return fmt.Errorf("downloading checksums.txt: %w", err)
+		}
+		if err := verifyChecksum(checksumData, binaryName, binaryData); err != nil {
+			return fmt.Errorf("checksum verification failed: %w", err)
+		}
+	}
+
+	return writeToolFiles(toolsDir, m.Name, manifestData, binaryData)
+}
+
+// installFromGitHub installs a tool directly from a GitHub release.
+func installFromGitHub(ref, toolsDir string) error {
 	owner, repo, tag := parseRef(ref)
 	if owner == "" || repo == "" {
 		return fmt.Errorf("invalid tool ref %q: expected owner/repo or owner/repo@tag", ref)
@@ -58,7 +163,6 @@ func Install(ref, toolsDir string) error {
 		return fmt.Errorf("fetching release: %w", err)
 	}
 
-	// Download manifest.json.
 	manifestAsset := findAsset(release.Assets, "manifest.json")
 	if manifestAsset == nil {
 		return fmt.Errorf("release %s/%s@%s has no manifest.json asset", owner, repo, release.TagName)
@@ -75,8 +179,10 @@ func Install(ref, toolsDir string) error {
 	if err := validateManifest(m); err != nil {
 		return fmt.Errorf("invalid manifest: %w", err)
 	}
+	if IsInstalled(m.Name, toolsDir) {
+		return fmt.Errorf("tool %q is already installed (run: solai uninstall %s to remove it first)", m.Name, m.Name)
+	}
 
-	// Find the binary for the current platform.
 	arch := runtime.GOARCH
 	binaryName := fmt.Sprintf("%s-linux-%s", m.Name, arch)
 	binaryAsset := findAsset(release.Assets, binaryName)
@@ -88,7 +194,6 @@ func Install(ref, toolsDir string) error {
 		return fmt.Errorf("downloading %s: %w", binaryName, err)
 	}
 
-	// Verify checksum if checksums.txt is present.
 	if checksumAsset := findAsset(release.Assets, "checksums.txt"); checksumAsset != nil {
 		checksumData, err := downloadAsset(checksumAsset.BrowserDownloadURL)
 		if err != nil {
@@ -99,8 +204,12 @@ func Install(ref, toolsDir string) error {
 		}
 	}
 
-	// Write files to toolsDir/<name>/.
-	toolDir := filepath.Join(toolsDir, m.Name)
+	return writeToolFiles(toolsDir, m.Name, manifestData, binaryData)
+}
+
+// writeToolFiles persists manifest.json and the binary into toolsDir/<name>/.
+func writeToolFiles(toolsDir, name string, manifestData, binaryData []byte) error {
+	toolDir := filepath.Join(toolsDir, name)
 	binDir := filepath.Join(toolDir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		return fmt.Errorf("creating tool directory: %w", err)
@@ -108,12 +217,20 @@ func Install(ref, toolsDir string) error {
 	if err := os.WriteFile(filepath.Join(toolDir, "manifest.json"), manifestData, 0644); err != nil {
 		return fmt.Errorf("writing manifest.json: %w", err)
 	}
-	binaryPath := filepath.Join(binDir, m.Name)
-	if err := os.WriteFile(binaryPath, binaryData, 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(binDir, name), binaryData, 0755); err != nil {
 		return fmt.Errorf("writing binary: %w", err)
 	}
-
 	return nil
+}
+
+// parseShortRef splits a short ref "name[@tag]" into name and optional tag.
+func parseShortRef(ref string) (name, tag string) {
+	parts := strings.SplitN(ref, "@", 2)
+	name = parts[0]
+	if len(parts) == 2 {
+		tag = parts[1]
+	}
+	return
 }
 
 // parseRef splits "owner/repo[@tag]" into its components.
