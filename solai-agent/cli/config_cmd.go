@@ -112,7 +112,7 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		},
 		"providers":      providers,
 		"user_goals":     cfg.UserGoals,
-		"cycle_interval": cfg.CycleInterval,
+		"cycle_timeout": cfg.CycleTimeout,
 		"wallet_seed":    redact(cfg.WalletSeed),
 		"sandbox": map[string]any{
 			"share_net":   cfg.Sandbox.ShareNet,
