@@ -12,26 +12,8 @@ import (
 
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/anthropic"
-	"github.com/tmc/langchaingo/llms/googleai"
-	"github.com/tmc/langchaingo/llms/openai"
 	lctools "github.com/tmc/langchaingo/tools"
 )
-
-// ---- IPC types (coordinator ↔ subagent contract) -------------------------
-
-type ToolInput struct {
-	Overview string   `json:"overview"`
-	Tasks    []string `json:"tasks"`
-}
-
-type ToolOutput struct {
-	Type   string          `json:"type"`
-	Output json.RawMessage `json:"output"`
-}
-
-// ---- Known tokens ---------------------------------------------------------
 
 var knownTokens = map[string]string{
 	"SOL":  "So11111111111111111111111111111111111111112",
@@ -58,7 +40,7 @@ var mintToSymbol = func() map[string]string {
 // Solana token prices from Jupiter's price API.
 type jupiterTool struct{}
 
-func (t *jupiterTool) Name() string { return "jupiter-price" }
+func (t *jupiterTool) Name() string { return "token-price" }
 
 func (t *jupiterTool) Description() string {
 	syms := make([]string, 0, len(knownTokens))
@@ -91,59 +73,6 @@ func (t *jupiterTool) Call(_ context.Context, input string) (string, error) {
 	}
 	return string(data), nil
 }
-
-// ---- LLM initialisation ---------------------------------------------------
-
-// newLLM creates a langchaingo LLM from the SOLAI_LLM_* env vars injected
-// by the coordinator.
-func newLLM(ctx context.Context) (llms.Model, error) {
-	provider := os.Getenv("SOLAI_LLM_PROVIDER")
-	model := os.Getenv("SOLAI_LLM_MODEL")
-	apiKey := os.Getenv("SOLAI_LLM_API_KEY")
-
-	if provider == "" || apiKey == "" {
-		return nil, fmt.Errorf("SOLAI_LLM_PROVIDER and SOLAI_LLM_API_KEY must be set")
-	}
-
-	switch provider {
-	case "google":
-		opts := []googleai.Option{googleai.WithAPIKey(apiKey)}
-		if model != "" {
-			opts = append(opts, googleai.WithDefaultModel(model))
-		}
-		return googleai.New(ctx, opts...)
-
-	case "openai":
-		opts := []openai.Option{openai.WithToken(apiKey)}
-		if model != "" {
-			opts = append(opts, openai.WithModel(model))
-		}
-		return openai.New(opts...)
-
-	case "anthropic":
-		opts := []anthropic.Option{anthropic.WithToken(apiKey)}
-		if model != "" {
-			opts = append(opts, anthropic.WithModel(model))
-		}
-		return anthropic.New(opts...)
-
-	default:
-		return nil, fmt.Errorf("unsupported LLM provider %q (supported: google, openai, anthropic)", provider)
-	}
-}
-
-// ---- Internal agent system prompt ----------------------------------------
-
-const agentSystemPrompt = `You are a Solana token price assistant. Your only job is to fetch current
-USD prices for tokens the user asks about, using the jupiter-price tool.
-
-Rules:
-- Always use the jupiter-price tool to get prices — never guess or make up prices.
-- If the user asks about "all tokens" or "major tokens", fetch: SOL, USDC, USDT, JUP, BONK.
-- Only look up tokens that are explicitly requested or clearly implied.
-- Report prices clearly with the token symbol, USD price, and 24h change.`
-
-// ---- Entry point ----------------------------------------------------------
 
 func main() {
 	var input ToolInput
@@ -203,18 +132,6 @@ func resolveToMints(tokens []string) []string {
 		}
 	}
 	return mints
-}
-
-type jupiterEntry struct {
-	UsdPrice    float64 `json:"usdPrice"`
-	PriceChange float64 `json:"priceChange24h"`
-}
-
-type TokenPrice struct {
-	Symbol      string  `json:"symbol"`
-	Mint        string  `json:"mint"`
-	PriceUSD    float64 `json:"price_usd"`
-	Change24hPct float64 `json:"change_24h_pct"`
 }
 
 func fetchPrices(mints []string) ([]TokenPrice, error) {
