@@ -48,7 +48,9 @@ Each cycle creates a **fresh agent instance** — there is no state carried betw
 ## CLI
 
 ```
-solai install <owner/repo[@tag]>   Install a tool from a GitHub release
+solai install <name[@tag]>         Install a curated tool by short name
+solai install <owner/repo[@tag]>   Install a third-party tool from a GitHub release
+solai uninstall <name>             Remove an installed tool
 solai config set <key> <value>     Set a configuration value
 solai config get <key>             Get a configuration value
 solai config list                  List all values (sensitive fields redacted)
@@ -87,6 +89,18 @@ solai start [--no-sandbox]         Start the autonomous agent
 |---|---|
 | `solana.rpc-url` | Solana RPC endpoint (default: `https://api.mainnet-beta.solana.com`) |
 | `solana.commitment` | Commitment level: `finalized`, `confirmed`, or `processed` (default: `confirmed`) |
+
+**Tool environment variables:**
+
+Tools can declare runtime variables they need (e.g. API keys). Set them with:
+
+```bash
+solai config set tool-env.<tool>.<VAR_NAME> <value>
+# example:
+solai config set tool-env.birdeye.BIRDEYE_API_KEY abc123
+```
+
+Values are stored in `~/.solai/config.json` and injected into the tool's environment at runtime. All tool env values are redacted in `config list` output.
 
 Configuration is stored in `~/.solai/config.json` and written atomically.
 
@@ -204,6 +218,26 @@ Tool errors are returned as strings in `output` so the LLM can observe them in t
   "required_capabilities": ["network-manager"]
 }
 ```
+
+For tools that need runtime environment variables (e.g. API keys), declare them in `env`. The agent reads values from `tool-env.<name>.*` in the config and injects them into the tool's environment:
+
+```json
+{
+  "name": "birdeye",
+  "description": "...",
+  "version": "1.0.0",
+  "executable": "./bin/birdeye",
+  "required_capabilities": ["network-manager"],
+  "env": [
+    { "name": "BIRDEYE_API_KEY", "sensitive": true,  "required": true  },
+    { "name": "BIRDEYE_BASE_URL", "sensitive": false, "required": false }
+  ]
+}
+```
+
+- `required: true` — the agent refuses to load the tool if the value is not set; a clear error message points to the fix command
+- `sensitive: true` — the value is redacted in `config list` output
+- Values are set with: `solai config set tool-env.birdeye.BIRDEYE_API_KEY <value>`
 
 For tools that need their own LLM, add `llm_options`:
 
