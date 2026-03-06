@@ -49,7 +49,6 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if cfg.UserGoals == "" {
 		return fmt.Errorf("user_goals is not configured; run: solai config set user-goals \"<goals>\"")
 	}
-
 	noSandbox, _ := cmd.Flags().GetBool("no-sandbox")
 	if noSandbox {
 		return agentRun(cmd.Context(), cfg, solaiconfig.ToolsDir())
@@ -132,11 +131,14 @@ func buildAgentBwrapArgs(cfg *solaiconfig.SolaiConfig, selfExe, configPath, tool
 	)
 
 	// Bind essential network/TLS files so the agent can make LLM API calls.
+	// /etc/ca-certificates is included because on some distros (e.g. Arch Linux)
+	// /etc/ssl/certs/ca-certificates.crt is a symlink into that directory.
 	for _, p := range []string{
 		"/etc/resolv.conf",
 		"/etc/nsswitch.conf",
 		"/etc/ssl/certs",
 		"/etc/ca-certificates.conf",
+		"/etc/ca-certificates",
 		"/etc/pki/tls/certs",
 	} {
 		if _, err := os.Stat(p); err == nil {

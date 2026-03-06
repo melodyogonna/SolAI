@@ -4,3 +4,7 @@
 # Generated sandbox binaries (run: go generate ./solai-agent/sandbox/...)
 solai-agent/sandbox/linux_amd64/bwrap
 solai-agent/sandbox/linux_arm64/bwrap
+
+# Build outputs
+.out/
+tools/*/bin/

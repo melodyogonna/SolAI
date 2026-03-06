@@ -32,7 +32,11 @@ Agent settings:
   user-goals           Goals the agent should pursue autonomously
   cycle-interval       Duration between agent cycles (e.g. 5m, 1h)
   wallet-seed          BIP39 seed phrase for the agent wallet
-  sandbox.share-net    Allow agent sandbox network access (true/false)`,
+  sandbox.share-net    Allow agent sandbox network access (true/false)
+
+Solana settings:
+  solana.rpc-url       Solana RPC endpoint (default: mainnet-beta)
+  solana.commitment    Commitment level: finalized, confirmed, or processed`,
 	Args: cobra.ExactArgs(2),
 	RunE: runConfigSet,
 }
@@ -113,6 +117,10 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		"sandbox": map[string]any{
 			"share_net":   cfg.Sandbox.ShareNet,
 			"extra_binds": cfg.Sandbox.ExtraBinds,
+		},
+		"solana": map[string]any{
+			"rpc_url":    cfg.Solana.RPCURL,
+			"commitment": cfg.Solana.Commitment,
 		},
 	}
 
