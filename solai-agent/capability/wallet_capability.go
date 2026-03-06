@@ -32,9 +32,9 @@ func (w *WalletCapability) Class() CapabilityClass {
 // wallet address when coordinating tools that need to know the source wallet.
 func (w *WalletCapability) Description() string {
 	return fmt.Sprintf(
-		"Your Solana wallet public address is %s. You control this wallet. "+
-			"When agentic tools need to perform transactions or queries on your behalf, "+
-			"provide this address as the source wallet.",
+		"Your Solana wallet. Public address: %s. "+
+			"Call this tool with any input to retrieve the wallet's public address as a string. "+
+			"Use this when you need to pass your wallet address to another tool or include it in a transaction.",
 		w.keypair.Base58PubKey(),
 	)
 }

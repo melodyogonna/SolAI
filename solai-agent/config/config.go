@@ -14,7 +14,7 @@ type SolaiConfig struct {
 	Model         ModelConfig       `json:"model"`
 	Providers     map[string]string `json:"providers"` // google/openai/anthropic → api key
 	WalletSeed    string            `json:"wallet_seed"`
-	CycleInterval string            `json:"cycle_interval"`
+	CycleTimeout string            `json:"cycle_timeout"`
 	UserGoals     string            `json:"user_goals"`
 	Sandbox       SandboxConfig     `json:"sandbox"`
 	Solana        SolanaConfig      `json:"solana"`
@@ -69,7 +69,7 @@ func ConfigPath() string {
 func DefaultConfig() *SolaiConfig {
 	return &SolaiConfig{
 		Providers:     map[string]string{},
-		CycleInterval: "5m",
+		CycleTimeout: "5m",
 		Sandbox: SandboxConfig{
 			ShareNet:   true,
 			ExtraBinds: []FSBind{},
@@ -126,7 +126,7 @@ func (c *SolaiConfig) Save() error {
 //
 // Supported keys: model.provider, model.name,
 // provider.google, provider.openai, provider.anthropic,
-// wallet-seed, cycle-interval, user-goals, sandbox.share-net.
+// wallet-seed, cycle-timeout, user-goals, sandbox.share-net.
 func (c *SolaiConfig) Set(key, value string) error {
 	switch key {
 	case "model.provider":
@@ -144,8 +144,8 @@ func (c *SolaiConfig) Set(key, value string) error {
 		c.Providers["anthropic"] = value
 	case "wallet-seed":
 		c.WalletSeed = value
-	case "cycle-interval":
-		c.CycleInterval = value
+	case "cycle-timeout":
+		c.CycleTimeout = value
 	case "user-goals":
 		c.UserGoals = value
 	case "sandbox.share-net":
@@ -167,7 +167,7 @@ func (c *SolaiConfig) Set(key, value string) error {
 			return fmt.Errorf("solana.commitment: expected finalized/confirmed/processed, got %q", value)
 		}
 	default:
-		return fmt.Errorf("unknown config key %q; valid keys: model.provider, model.name, provider.google, provider.openai, provider.anthropic, wallet-seed, cycle-interval, user-goals, sandbox.share-net, solana.rpc-url, solana.commitment", key)
+		return fmt.Errorf("unknown config key %q; valid keys: model.provider, model.name, provider.google, provider.openai, provider.anthropic, wallet-seed, cycle-timeout, user-goals, sandbox.share-net, solana.rpc-url, solana.commitment", key)
 	}
 	return nil
 }
@@ -187,8 +187,8 @@ func (c *SolaiConfig) Get(key string) (string, error) {
 		return c.Providers["anthropic"], nil
 	case "wallet-seed":
 		return c.WalletSeed, nil
-	case "cycle-interval":
-		return c.CycleInterval, nil
+	case "cycle-timeout":
+		return c.CycleTimeout, nil
 	case "user-goals":
 		return c.UserGoals, nil
 	case "sandbox.share-net":

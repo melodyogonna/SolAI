@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/melodyogonna/solai/solai-agent/capability"
 	"github.com/tmc/langchaingo/agents"
@@ -29,11 +28,11 @@ func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManag
 	}
 	go cfg.SystemManager.Start(ctx)
 
-	agentTools := cfg.SystemManager.GetTools()
+	agentTools := append(capManager.GetInternalTools(), cfg.SystemManager.GetTools()...)
 	if len(agentTools) == 0 {
-		slog.Warn("no agentic tools loaded — agent will report it cannot accomplish goals")
+		slog.Warn("no tools loaded — agent will report it cannot accomplish goals")
 	} else {
-		slog.Info("agentic tools loaded", "count", len(agentTools))
+		slog.Info("tools loaded", "count", len(agentTools))
 		for _, t := range agentTools {
 			slog.Info("tool available", "name", t.Name())
 		}
@@ -50,9 +49,7 @@ func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManag
 		}
 
 		slog.Info("starting agent cycle")
-		// Give each cycle twice the interval as a hard deadline to prevent
-		// a runaway cycle from blocking the next one indefinitely.
-		cycleCtx, cancel := context.WithTimeout(ctx, cfg.CycleInterval*2)
+		cycleCtx, cancel := context.WithTimeout(ctx, cfg.CycleTimeout)
 		answer, err := runCycle(cycleCtx, cfg, agentTools, cyclePrompt)
 		cancel()
 
@@ -60,14 +57,6 @@ func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManag
 			handleCycleError(err)
 		} else {
 			slog.Info("cycle complete", "answer", answer)
-		}
-
-		// Sleep for the cycle interval, but wake immediately if ctx is cancelled.
-		select {
-		case <-ctx.Done():
-			slog.Info("agent shutting down")
-			return
-		case <-time.After(cfg.CycleInterval):
 		}
 	}
 }

@@ -1,8 +1,11 @@
 package capability
 
 import (
+	"context"
 	"fmt"
 	"strings"
+
+	lctools "github.com/tmc/langchaingo/tools"
 )
 
 // Factory is a function that creates a new Capability instance.
@@ -72,9 +75,30 @@ func (m *CapabilityManager) IsRegularCapabilityAvailable(name string) bool {
 	return false
 }
 
+// capabilityTool adapts a Capability to the langchaingo tools.Tool interface
+// so Internal capabilities can be called by the LLM via the ReAct loop.
+type capabilityTool struct{ c Capability }
+
+func (t capabilityTool) Name() string        { return t.c.Name() }
+func (t capabilityTool) Description() string { return t.c.Description() }
+func (t capabilityTool) Call(ctx context.Context, input string) (string, error) {
+	return t.c.Execute(ctx, input)
+}
+
+// GetInternalTools returns all Internal capabilities wrapped as langchaingo
+// tools so the ReAct agent can call them directly.
+func (m *CapabilityManager) GetInternalTools() []lctools.Tool {
+	internals := m.GetByClass(Internal)
+	tools := make([]lctools.Tool, len(internals))
+	for i, c := range internals {
+		tools[i] = capabilityTool{c}
+	}
+	return tools
+}
+
 // BuildCapabilityPromptSection generates a Markdown block describing all
 // Internal capabilities, for injection into the per-cycle prompt so the LLM
-// is aware of them (e.g. its own wallet address).
+// is aware of them.
 // Returns an empty string if there are no Internal capabilities.
 func (m *CapabilityManager) BuildCapabilityPromptSection() string {
 	internals := m.GetByClass(Internal)

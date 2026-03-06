@@ -87,7 +87,7 @@ func agentRun(ctx context.Context, cfg *solaiconfig.SolaiConfig, toolsDir string
 		"provider", cfg.Model.Provider,
 		"model", cfg.Model.Name,
 		"toolsDir", toolsDir,
-		"cycleInterval", agentCfg.CycleInterval,
+		"cycleTimeout", agentCfg.CycleTimeout,
 		"wallet", agentCfg.Wallet.Base58PubKey(),
 	)
 

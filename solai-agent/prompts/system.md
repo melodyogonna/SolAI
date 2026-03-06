@@ -38,20 +38,7 @@ Follow this approach every cycle, without exception:
 
 ## Tool Usage Rules
 
-When calling a tool, always provide your input as a JSON object with this structure:
-
-```json
-{
-  "overview": "One sentence describing the full objective of this tool call.",
-  "tasks": [
-    "Step 1 the tool should perform",
-    "Step 2 the tool should perform"
-  ]
-}
-```
-
-- The `overview` must be a single clear sentence.
-- The `tasks` list must contain discrete, ordered steps.
+- Always use the exact JSON input format described in each tool's description.
 - Read tool output carefully before deciding the next action.
 - If a tool returns `Tool error: ...`, treat it as an Observation and adapt accordingly.
 - If a tool returns `Tool infrastructure error: ...`, the tool cannot run — report it.

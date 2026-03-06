@@ -34,8 +34,9 @@ type Config struct {
 	// Wallet is the agent's Solana keypair, exposed as an Internal capability.
 	Wallet *wallet.SolKeyPair
 
-	// CycleInterval is how long the agent sleeps between autonomous cycles.
-	CycleInterval time.Duration
+	// CycleTimeout is the maximum time allowed for a single autonomous cycle.
+	// If a cycle exceeds this, it is cancelled and the next one starts immediately.
+	CycleTimeout time.Duration
 
 	// LLMProvider manages API credentials for LLM providers used by agentic tools.
 	LLMProvider *capability.LLMProvider
@@ -48,7 +49,7 @@ type Config struct {
 // Returns an error if any required variable is missing or a required file cannot be read.
 //
 // Required env vars: API_KEY, SYSTEM_PROMPT, USER_PROMPT, TOOLS_DIR
-// Optional env vars: WALLET_SEED (empty → generate new wallet), CYCLE_INTERVAL (default: 5m)
+// Optional env vars: WALLET_SEED (empty → generate new wallet), CYCLE_TIMEOUT (default: 5m)
 //
 // Note: LoadConfig does not initialize the LLM or set Config.LLM. The caller (main.go)
 // is responsible for constructing the LLM with the API_KEY and assigning it.
@@ -87,7 +88,7 @@ func LoadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("creating wallet: %w", err)
 	}
 
-	cycleInterval := parseDuration(os.Getenv("CYCLE_INTERVAL"), 5*time.Minute)
+	cycleInterval := parseDuration(os.Getenv("CYCLE_TIMEOUT"), 5*time.Minute)
 
 	llmProvider := capability.NewLLMProvider()
 	loader := func(bwrapPath string, checker capability.CapabilityChecker) ([]lctools.Tool, []error, error) {
@@ -100,7 +101,7 @@ func LoadConfig() (Config, error) {
 		UserGoals:     userGoals,
 		ToolsDir:      toolsDir,
 		Wallet:        &kp,
-		CycleInterval: cycleInterval,
+		CycleTimeout: cycleInterval,
 		LLMProvider:   llmProvider,
 		SystemManager: systemManager,
 	}, nil
@@ -125,7 +126,7 @@ func LoadConfigFrom(cfg *solaiconfig.SolaiConfig, toolsDir, systemPrompt string)
 		return Config{}, fmt.Errorf("creating wallet: %w", err)
 	}
 
-	cycleInterval := parseDuration(cfg.CycleInterval, 5*time.Minute)
+	cycleInterval := parseDuration(cfg.CycleTimeout, 5*time.Minute)
 
 	llmProvider := capability.NewLLMProviderFromMap(cfg.Providers)
 	loader := func(bwrapPath string, checker capability.CapabilityChecker) ([]lctools.Tool, []error, error) {
@@ -138,7 +139,7 @@ func LoadConfigFrom(cfg *solaiconfig.SolaiConfig, toolsDir, systemPrompt string)
 		UserGoals:     cfg.UserGoals,
 		ToolsDir:      toolsDir,
 		Wallet:        &kp,
-		CycleInterval: cycleInterval,
+		CycleTimeout: cycleInterval,
 		LLMProvider:   llmProvider,
 		SystemManager: systemManager,
 	}, nil
