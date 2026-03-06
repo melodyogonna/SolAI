@@ -19,12 +19,6 @@ func TestUninstall_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := uninstallCmd
-	cmd.SetArgs([]string{"my-tool"})
-
-	// Patch config.ToolsDir by temporarily overriding via env var that config.ToolsDir reads.
-	t.Setenv("HOME", toolsDir)
-
 	// Directly invoke the handler with a fake toolsDir to avoid filesystem side-effects.
 	err := removeToolDir(toolsDir, "my-tool")
 	if err != nil {
