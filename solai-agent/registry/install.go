@@ -129,6 +129,12 @@ func installFromIndex(ref, toolsDir string) error {
 	if err := json.Unmarshal(manifestData, &m); err != nil {
 		return fmt.Errorf("parsing manifest.json: %w", err)
 	}
+	if name == "" {
+		return fmt.Errorf("requested tool name is empty")
+	}
+	if m.Name != name {
+		return fmt.Errorf("manifest name %q does not match requested tool %q", m.Name, name)
+	}
 	if err := validateManifest(m); err != nil {
 		return fmt.Errorf("invalid manifest: %w", err)
 	}
