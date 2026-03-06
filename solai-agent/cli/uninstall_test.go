@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// runUninstallWithDir calls runUninstall after temporarily pointing ToolsDir at dir.
-// We do this by setting up the tool directory structure and invoking cobra's RunE directly.
+// Tests for uninstall behavior by creating tool directories under a temporary toolsDir
+// and invoking removeToolDir directly to verify removal semantics.
 
 func TestUninstall_Success(t *testing.T) {
 	toolsDir := t.TempDir()
