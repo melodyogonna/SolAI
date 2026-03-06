@@ -8,3 +8,5 @@ solai-agent/sandbox/linux_arm64/bwrap
 # Build outputs
 .out/
 tools/*/bin/
+
+test-ledger/
