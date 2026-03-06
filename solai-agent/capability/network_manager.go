@@ -35,3 +35,7 @@ func (n *NetworkManagerCapability) Execute(_ context.Context, _ string) (string,
 	out, _ := json.Marshal(map[string]string{"status": "network access granted"})
 	return string(out), nil
 }
+
+// ToolRequestDescription implements Capability. Network access is granted at
+// sandbox setup time via required_capabilities, not via runtime requests.
+func (n *NetworkManagerCapability) ToolRequestDescription() string { return "" }

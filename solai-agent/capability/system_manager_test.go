@@ -10,16 +10,6 @@ import (
 	lctools "github.com/tmc/langchaingo/tools"
 )
 
-// noopChecker is a CapabilityChecker that always returns false.
-type noopChecker struct{}
-
-func (noopChecker) IsRegularCapabilityAvailable(_ string) bool { return false }
-
-// allChecker is a CapabilityChecker that always returns true.
-type allChecker struct{}
-
-func (allChecker) IsRegularCapabilityAvailable(_ string) bool { return true }
-
 // stubTool implements lctools.Tool for testing.
 type stubTool struct{ name string }
 
@@ -85,11 +75,11 @@ func TestExecute_AfterSetup_ReflectsLoadedTools(t *testing.T) {
 		&stubTool{name: "tool-a"},
 		&stubTool{name: "tool-b"},
 	}
-	loader := func(_ string, _ CapabilityChecker) ([]lctools.Tool, []error, error) {
+	loader := func(_ string, _ *CapabilityManager) ([]lctools.Tool, []error, error) {
 		return tools, nil, nil
 	}
 	sm := NewSystemManager(loader, NewLLMProviderFromMap(nil))
-	_, err := sm.Setup(noopChecker{})
+	_, err := sm.Setup(SetUp(nil))
 	if err != nil {
 		// Setup may fail due to sandbox extraction; that's acceptable in tests.
 		t.Logf("Setup warning (sandbox unavailable): %v", err)
@@ -110,7 +100,7 @@ func TestExecute_AfterSetup_ReflectsLoadedTools(t *testing.T) {
 
 func TestExecute_SandboxAvailableField(t *testing.T) {
 	sm := NewSystemManager(
-		func(_ string, _ CapabilityChecker) ([]lctools.Tool, []error, error) {
+		func(_ string, _ *CapabilityManager) ([]lctools.Tool, []error, error) {
 			return nil, nil, nil
 		},
 		NewLLMProviderFromMap(nil),
@@ -131,22 +121,22 @@ func TestExecute_SandboxAvailableField(t *testing.T) {
 // ---- Setup ------------------------------------------------------------------
 
 func TestSetup_LoaderFatalError_Propagated(t *testing.T) {
-	loader := func(_ string, _ CapabilityChecker) ([]lctools.Tool, []error, error) {
+	loader := func(_ string, _ *CapabilityManager) ([]lctools.Tool, []error, error) {
 		return nil, nil, errors.New("fatal loader error")
 	}
 	sm := NewSystemManager(loader, NewLLMProviderFromMap(nil))
-	_, err := sm.Setup(noopChecker{})
+	_, err := sm.Setup(SetUp(nil))
 	if err == nil {
 		t.Fatal("expected fatal error from loader to be propagated")
 	}
 }
 
 func TestSetup_LoaderWarnings_Returned(t *testing.T) {
-	loader := func(_ string, _ CapabilityChecker) ([]lctools.Tool, []error, error) {
+	loader := func(_ string, _ *CapabilityManager) ([]lctools.Tool, []error, error) {
 		return nil, []error{errors.New("tool-x disabled")}, nil
 	}
 	sm := NewSystemManager(loader, NewLLMProviderFromMap(nil))
-	warnings, err := sm.Setup(noopChecker{})
+	warnings, err := sm.Setup(SetUp(nil))
 	if err != nil {
 		t.Logf("Setup error (may be sandbox): %v", err)
 		return
@@ -158,11 +148,11 @@ func TestSetup_LoaderWarnings_Returned(t *testing.T) {
 
 func TestSetup_GetToolsAfterSetup(t *testing.T) {
 	expected := []lctools.Tool{&stubTool{name: "my-tool"}}
-	loader := func(_ string, _ CapabilityChecker) ([]lctools.Tool, []error, error) {
+	loader := func(_ string, _ *CapabilityManager) ([]lctools.Tool, []error, error) {
 		return expected, nil, nil
 	}
 	sm := NewSystemManager(loader, NewLLMProviderFromMap(nil))
-	if _, err := sm.Setup(noopChecker{}); err != nil {
+	if _, err := sm.Setup(SetUp(nil)); err != nil {
 		t.Logf("Setup error (may be sandbox): %v", err)
 	}
 	tools := sm.GetTools()

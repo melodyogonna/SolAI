@@ -1,6 +1,11 @@
 go 1.25.7
 
 use ./ratelimit
+
 use ./solai-agent
 
-use ./tools/token-price
+use (
+	./tools/jupiter-swap
+	./tools/raydium
+	./tools/token-price
+)

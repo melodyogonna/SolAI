@@ -44,7 +44,7 @@ type probeOutput struct {
 func runProbe(t *testing.T, dir, exe string, policy tool.SandboxPolicy) probeOutput {
 	t.Helper()
 	input := tool.ToolInput{Overview: "probe", Tasks: []string{"probe"}}
-	out, err := tool.RunTool(context.Background(), dir, exe, input, 10*time.Second, nil, policy)
+	out, err := tool.RunTool(context.Background(), dir, exe, input, 10*time.Second, nil, policy, nil)
 	if err != nil {
 		t.Fatalf("RunTool: %v", err)
 	}

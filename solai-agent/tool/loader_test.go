@@ -10,7 +10,7 @@ import (
 	solaiconfig "github.com/melodyogonna/solai/solai-agent/config"
 )
 
-// fakeChecker is a CapabilityChecker that reports available capability names.
+// fakeChecker is a CapabilityChecker used by buildSandboxPolicy tests directly.
 type fakeChecker struct {
 	available map[string]bool
 }
@@ -25,6 +25,20 @@ func newChecker(names ...string) *fakeChecker {
 
 func (f *fakeChecker) IsRegularCapabilityAvailable(name string) bool {
 	return f.available[name]
+}
+
+// newCapManager builds a *capability.CapabilityManager with the named capabilities.
+// Supported names: "network-manager". Unknown names are silently ignored.
+func newCapManager(names ...string) *capability.CapabilityManager {
+	for _, n := range names {
+		switch n {
+		case "network-manager":
+			capability.Register(n, func() capability.Capability {
+				return capability.NewNetworkManagerCapability()
+			})
+		}
+	}
+	return capability.SetUp(names)
 }
 
 // setupTool creates a fake tool directory with a manifest and stub executable.
@@ -55,7 +69,7 @@ func validManifestJSON(name string) string {
 func TestLoadTools_EmptyDir(t *testing.T) {
 	toolsDir := t.TempDir()
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
+	tools, warnings, err := LoadTools(toolsDir, provider, newCapManager(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -69,7 +83,7 @@ func TestLoadTools_EmptyDir(t *testing.T) {
 
 func TestLoadTools_InvalidDir(t *testing.T) {
 	provider := capability.NewLLMProviderFromMap(nil)
-	_, _, err := LoadTools("/nonexistent/tools/dir", provider, newChecker(), "", nil)
+	_, _, err := LoadTools("/nonexistent/tools/dir", provider, newCapManager(), "", nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent directory")
 	}
@@ -80,7 +94,7 @@ func TestLoadTools_ValidTool_NoLLM(t *testing.T) {
 	setupTool(t, toolsDir, "my-tool", validManifestJSON("my-tool"))
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
+	tools, warnings, err := LoadTools(toolsDir, provider, newCapManager(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -101,7 +115,7 @@ func TestLoadTools_MultipleTools(t *testing.T) {
 	setupTool(t, toolsDir, "tool-b", validManifestJSON("tool-b"))
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, _, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
+	tools, _, err := LoadTools(toolsDir, provider, newCapManager(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -118,7 +132,7 @@ func TestLoadTools_MissingManifest_Warning(t *testing.T) {
 	}
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
+	tools, warnings, err := LoadTools(toolsDir, provider, newCapManager(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -141,7 +155,7 @@ func TestLoadTools_InvalidManifest_Warning(t *testing.T) {
 	}
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	_, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
+	_, warnings, err := LoadTools(toolsDir, provider, newCapManager(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -163,7 +177,7 @@ func TestLoadTools_MissingExecutable_Warning(t *testing.T) {
 	}
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
+	tools, warnings, err := LoadTools(toolsDir, provider, newCapManager(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -192,7 +206,7 @@ func TestLoadTools_LLMOptions_ProviderConfigured(t *testing.T) {
 	setupTool(t, toolsDir, "llm-tool", manifest)
 
 	provider := capability.NewLLMProviderFromMap(map[string]string{"google": "gkey"})
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
+	tools, warnings, err := LoadTools(toolsDir, provider, newCapManager(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -219,7 +233,7 @@ func TestLoadTools_LLMOptions_NoProviderConfigured_Warning(t *testing.T) {
 	setupTool(t, toolsDir, "llm-tool", manifest)
 
 	provider := capability.NewLLMProviderFromMap(nil) // no providers configured
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
+	tools, warnings, err := LoadTools(toolsDir, provider, newCapManager(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -245,8 +259,8 @@ func TestLoadTools_RequiredCapability_Available(t *testing.T) {
 	setupTool(t, toolsDir, "net-tool", manifest)
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	checker := newChecker("network-manager")
-	tools, warnings, err := LoadTools(toolsDir, provider, checker, "", nil)
+	capMgr := newCapManager("network-manager")
+	tools, warnings, err := LoadTools(toolsDir, provider, capMgr, "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -270,8 +284,8 @@ func TestLoadTools_RequiredCapability_Missing_Warning(t *testing.T) {
 	setupTool(t, toolsDir, "net-tool", manifest)
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	checker := newChecker() // network-manager not available
-	tools, warnings, err := LoadTools(toolsDir, provider, checker, "", nil)
+	capMgr := newCapManager() // network-manager not available
+	tools, warnings, err := LoadTools(toolsDir, provider, capMgr, "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -341,7 +355,7 @@ func TestLoadTools_SkipsFiles(t *testing.T) {
 	setupTool(t, toolsDir, "real-tool", validManifestJSON("real-tool"))
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, _, err := LoadTools(toolsDir, provider, newChecker(), "", nil)
+	tools, _, err := LoadTools(toolsDir, provider, newCapManager(), "", nil)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -466,7 +480,7 @@ func TestLoadTools_RequiredEnvVar_Missing_Warning(t *testing.T) {
 	setupTool(t, toolsDir, "api-tool", manifest)
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", solaiconfig.DefaultConfig())
+	tools, warnings, err := LoadTools(toolsDir, provider, newCapManager(), "", solaiconfig.DefaultConfig())
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -485,7 +499,7 @@ func TestLoadTools_RequiredEnvVar_Configured_Loads(t *testing.T) {
 
 	cfg := cfgWithToolEnv("api-tool", map[string]string{"API_KEY": "secret"})
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", cfg)
+	tools, warnings, err := LoadTools(toolsDir, provider, newCapManager(), "", cfg)
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}
@@ -503,7 +517,7 @@ func TestLoadTools_OptionalEnvVar_Missing_Loads(t *testing.T) {
 	setupTool(t, toolsDir, "opt-tool", manifest)
 
 	provider := capability.NewLLMProviderFromMap(nil)
-	tools, warnings, err := LoadTools(toolsDir, provider, newChecker(), "", solaiconfig.DefaultConfig())
+	tools, warnings, err := LoadTools(toolsDir, provider, newCapManager(), "", solaiconfig.DefaultConfig())
 	if err != nil {
 		t.Fatalf("LoadTools: %v", err)
 	}

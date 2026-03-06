@@ -31,7 +31,7 @@ import (
 //   - []tools.Tool: successfully loaded tools (may be empty if none found)
 //   - []error: one warning per tool that failed to load or was disabled
 //   - error: fatal only if toolsDir itself cannot be read
-func LoadTools(toolsDir string, provider *capability.LLMProvider, checker capability.CapabilityChecker, bwrapPath string, cfg *solaiconfig.SolaiConfig) ([]tools.Tool, []error, error) {
+func LoadTools(toolsDir string, provider *capability.LLMProvider, capManager *capability.CapabilityManager, bwrapPath string, cfg *solaiconfig.SolaiConfig) ([]tools.Tool, []error, error) {
 	entries, err := os.ReadDir(toolsDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading tools directory %s: %w", toolsDir, err)
@@ -82,7 +82,7 @@ func LoadTools(toolsDir string, provider *capability.LLMProvider, checker capabi
 		}
 
 		// Validate required capabilities and build the sandbox policy.
-		policy, capWarning := buildSandboxPolicy(manifest, checker, bwrapPath)
+		policy, capWarning := buildSandboxPolicy(manifest, capManager, bwrapPath)
 		if capWarning != nil {
 			warnings = append(warnings, fmt.Errorf("tool %q disabled: %w", manifest.Name, capWarning))
 			continue
@@ -95,7 +95,7 @@ func LoadTools(toolsDir string, provider *capability.LLMProvider, checker capabi
 			continue
 		}
 
-		loaded = append(loaded, NewAgenticTool(manifest, toolDir, llmCfg, policy, toolEnv))
+		loaded = append(loaded, NewAgenticTool(manifest, toolDir, llmCfg, policy, toolEnv, capManager))
 	}
 
 	return loaded, warnings, nil

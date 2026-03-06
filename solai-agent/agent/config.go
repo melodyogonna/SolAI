@@ -91,8 +91,8 @@ func LoadConfig() (Config, error) {
 	cycleInterval := parseDuration(os.Getenv("CYCLE_TIMEOUT"), 5*time.Minute)
 
 	llmProvider := capability.NewLLMProvider()
-	loader := func(bwrapPath string, checker capability.CapabilityChecker) ([]lctools.Tool, []error, error) {
-		return tool.LoadTools(toolsDir, llmProvider, checker, bwrapPath, nil)
+	loader := func(bwrapPath string, capManager *capability.CapabilityManager) ([]lctools.Tool, []error, error) {
+		return tool.LoadTools(toolsDir, llmProvider, capManager, bwrapPath, nil)
 	}
 	systemManager := capability.NewSystemManager(loader, llmProvider)
 
@@ -129,8 +129,8 @@ func LoadConfigFrom(cfg *solaiconfig.SolaiConfig, toolsDir, systemPrompt string)
 	cycleInterval := parseDuration(cfg.CycleTimeout, 5*time.Minute)
 
 	llmProvider := capability.NewLLMProviderFromMap(cfg.Providers)
-	loader := func(bwrapPath string, checker capability.CapabilityChecker) ([]lctools.Tool, []error, error) {
-		return tool.LoadTools(toolsDir, llmProvider, checker, bwrapPath, cfg)
+	loader := func(bwrapPath string, capManager *capability.CapabilityManager) ([]lctools.Tool, []error, error) {
+		return tool.LoadTools(toolsDir, llmProvider, capManager, bwrapPath, cfg)
 	}
 	systemManager := capability.NewSystemManager(loader, llmProvider)
 

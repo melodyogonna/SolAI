@@ -31,8 +31,8 @@ func TestWalletCapability_Name(t *testing.T) {
 func TestWalletCapability_Class(t *testing.T) {
 	kp := newTestWallet(t)
 	w := NewWalletCapability(kp)
-	if w.Class() != Internal {
-		t.Errorf("Class: got %v, want Internal", w.Class())
+	if w.Class() != Regular {
+		t.Errorf("Class: got %v, want Regular", w.Class())
 	}
 }
 

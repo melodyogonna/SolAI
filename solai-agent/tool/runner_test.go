@@ -1,8 +1,6 @@
 package tool
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -66,77 +64,6 @@ func TestParseTaskInput_JSONWithTasksPreserved(t *testing.T) {
 	got := parseTaskInput(input)
 	if len(got.Tasks) != 3 {
 		t.Errorf("expected 3 tasks, got %d", len(got.Tasks))
-	}
-}
-
-// ---- parseToolOutput --------------------------------------------------------
-
-func TestParseToolOutput_Success(t *testing.T) {
-	raw := `{"type":"success","output":{"price":142.5}}`
-	out, err := parseToolOutput([]byte(raw))
-	if err != nil {
-		t.Fatalf("parseToolOutput: %v", err)
-	}
-	if out.Type != "success" {
-		t.Errorf("Type: got %q, want %q", out.Type, "success")
-	}
-	var result map[string]any
-	if err := json.Unmarshal(out.Output, &result); err != nil {
-		t.Fatalf("Output: %v", err)
-	}
-	if result["price"].(float64) != 142.5 {
-		t.Errorf("price: got %v", result["price"])
-	}
-}
-
-func TestParseToolOutput_Error(t *testing.T) {
-	raw := `{"type":"error","output":"something went wrong"}`
-	out, err := parseToolOutput([]byte(raw))
-	if err != nil {
-		t.Fatalf("parseToolOutput: %v", err)
-	}
-	if out.Type != "error" {
-		t.Errorf("Type: got %q, want error", out.Type)
-	}
-}
-
-func TestParseToolOutput_MissingType(t *testing.T) {
-	raw := `{"output":"no type"}`
-	_, err := parseToolOutput([]byte(raw))
-	if err == nil {
-		t.Fatal("expected error for missing 'type' field")
-	}
-	if !strings.Contains(err.Error(), "type") {
-		t.Errorf("error should mention 'type': %v", err)
-	}
-}
-
-func TestParseToolOutput_InvalidJSON(t *testing.T) {
-	_, err := parseToolOutput([]byte("{bad json"))
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-}
-
-func TestParseToolOutput_StringOutput(t *testing.T) {
-	raw := `{"type":"success","output":"just a string"}`
-	out, err := parseToolOutput([]byte(raw))
-	if err != nil {
-		t.Fatalf("parseToolOutput: %v", err)
-	}
-	if out.Type != "success" {
-		t.Errorf("Type: got %q", out.Type)
-	}
-}
-
-func TestParseToolOutput_NullOutput(t *testing.T) {
-	raw := `{"type":"success","output":null}`
-	out, err := parseToolOutput([]byte(raw))
-	if err != nil {
-		t.Fatalf("parseToolOutput: %v", err)
-	}
-	if out.Type != "success" {
-		t.Errorf("Type: got %q", out.Type)
 	}
 }
 

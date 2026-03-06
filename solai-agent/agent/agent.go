@@ -34,7 +34,7 @@ func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManag
 	}
 	go cfg.SystemManager.Start(ctx)
 
-	agentTools := append(capManager.GetInternalTools(), cfg.SystemManager.GetTools()...)
+	agentTools := append(capManager.GetAgentTools(), cfg.SystemManager.GetTools()...)
 	if len(agentTools) == 0 {
 		slog.Warn("no tools loaded — agent will report it cannot accomplish goals")
 	} else {
