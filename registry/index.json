@@ -4,8 +4,17 @@
     "token-price": {
       "description": "Fetches current USD prices and 24h change for Solana tokens. Accepts token symbols (SOL, USDC, USDT, JUP, BONK, WIF, RAY, PYTH) or raw mint addresses.",
       "maintainer": "melodyogonna/solai",
-      "latest": null,
-      "versions": {}
+      "latest": "v0.1.2",
+      "versions": {
+        "v0.1.2": {
+          "manifest": "https://github.com/melodyogonna/SolAI/releases/download/token-price%2Fv0.1.2/manifest.json",
+          "checksums": "https://github.com/melodyogonna/SolAI/releases/download/token-price%2Fv0.1.2/checksums.txt",
+          "assets": {
+            "linux/amd64": "https://github.com/melodyogonna/SolAI/releases/download/token-price%2Fv0.1.2/token-price-linux-amd64",
+            "linux/arm64": "https://github.com/melodyogonna/SolAI/releases/download/token-price%2Fv0.1.2/token-price-linux-arm64"
+          }
+        }
+      }
     }
   }
 }
