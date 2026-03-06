@@ -1,4 +1,4 @@
-# SolAI
+# Solana AI
 
 An autonomous AI agent for the Solana blockchain. SolAI runs a continuous reasoning loop powered by a user-configured LLM (Google, OpenAI, or Anthropic), coordinating a suite of external tools to accomplish user-defined goals — monitoring token prices, reading on-chain data, executing transactions, or anything else a tool can be built to do.
 
