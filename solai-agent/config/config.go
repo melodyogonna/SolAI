@@ -17,6 +17,13 @@ type SolaiConfig struct {
 	CycleInterval string            `json:"cycle_interval"`
 	UserGoals     string            `json:"user_goals"`
 	Sandbox       SandboxConfig     `json:"sandbox"`
+	Solana        SolanaConfig      `json:"solana"`
+}
+
+// SolanaConfig controls how the agent interacts with the Solana blockchain.
+type SolanaConfig struct {
+	RPCURL     string `json:"rpc_url"`    // default: https://api.mainnet-beta.solana.com
+	Commitment string `json:"commitment"` // "finalized", "confirmed", or "processed"
 }
 
 // ModelConfig identifies the LLM the coordinator uses.
@@ -66,6 +73,10 @@ func DefaultConfig() *SolaiConfig {
 		Sandbox: SandboxConfig{
 			ShareNet:   true,
 			ExtraBinds: []FSBind{},
+		},
+		Solana: SolanaConfig{
+			RPCURL:     "https://api.mainnet-beta.solana.com",
+			Commitment: "confirmed",
 		},
 	}
 }
@@ -146,8 +157,17 @@ func (c *SolaiConfig) Set(key, value string) error {
 		default:
 			return fmt.Errorf("sandbox.share-net: expected true/false, got %q", value)
 		}
+	case "solana.rpc-url":
+		c.Solana.RPCURL = value
+	case "solana.commitment":
+		switch value {
+		case "finalized", "confirmed", "processed":
+			c.Solana.Commitment = value
+		default:
+			return fmt.Errorf("solana.commitment: expected finalized/confirmed/processed, got %q", value)
+		}
 	default:
-		return fmt.Errorf("unknown config key %q; valid keys: model.provider, model.name, provider.google, provider.openai, provider.anthropic, wallet-seed, cycle-interval, user-goals, sandbox.share-net", key)
+		return fmt.Errorf("unknown config key %q; valid keys: model.provider, model.name, provider.google, provider.openai, provider.anthropic, wallet-seed, cycle-interval, user-goals, sandbox.share-net, solana.rpc-url, solana.commitment", key)
 	}
 	return nil
 }
@@ -176,6 +196,10 @@ func (c *SolaiConfig) Get(key string) (string, error) {
 			return "true", nil
 		}
 		return "false", nil
+	case "solana.rpc-url":
+		return c.Solana.RPCURL, nil
+	case "solana.commitment":
+		return c.Solana.Commitment, nil
 	default:
 		return "", fmt.Errorf("unknown config key %q", key)
 	}

@@ -83,6 +83,9 @@ func (m Manifest) Validate() error {
 	if m.Description == "" {
 		return fmt.Errorf("manifest %q missing required field: description", m.Name)
 	}
+	if m.Version == "" {
+		return fmt.Errorf("manifest %q missing required field: version", m.Name)
+	}
 	if m.Executable == "" {
 		return fmt.Errorf("manifest %q missing required field: executable", m.Name)
 	}
