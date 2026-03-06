@@ -1,0 +1,105 @@
+name: Release Tool
+
+on:
+  push:
+    tags:
+      - "*/v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract tool metadata from tag
+        id: meta
+        run: |
+          # Tag format: token-price/v1.2.3
+          TAG="${GITHUB_REF#refs/tags/}"
+          TOOL="${TAG%/v*}"
+          VERSION="v${TAG#*/v}"
+          echo "tool=$TOOL" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/${{ steps.meta.outputs.tool }}/go.mod
+          cache-dependency-path: tools/${{ steps.meta.outputs.tool }}/go.sum
+
+      - name: Build binaries
+        working-directory: tools/${{ steps.meta.outputs.tool }}
+        env:
+          TOOL: ${{ steps.meta.outputs.tool }}
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "${TOOL}-linux-amd64" .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o "${TOOL}-linux-arm64" .
+
+      - name: Generate checksums
+        working-directory: tools/${{ steps.meta.outputs.tool }}
+        env:
+          TOOL: ${{ steps.meta.outputs.tool }}
+        run: sha256sum "${TOOL}-linux-amd64" "${TOOL}-linux-arm64" > checksums.txt
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            tools/${{ steps.meta.outputs.tool }}/${{ steps.meta.outputs.tool }}-linux-amd64
+            tools/${{ steps.meta.outputs.tool }}/${{ steps.meta.outputs.tool }}-linux-arm64
+            tools/${{ steps.meta.outputs.tool }}/manifest.json
+            tools/${{ steps.meta.outputs.tool }}/checksums.txt
+
+      - name: Update registry index
+        env:
+          TOOL: ${{ steps.meta.outputs.tool }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          python3 - <<'EOF'
+          import json, os
+
+          index_path = 'registry/index.json'
+          tool    = os.environ['TOOL']
+          version = os.environ['VERSION']
+          tag     = os.environ['TAG']
+          repo    = os.environ['GITHUB_REPOSITORY']
+
+          encoded_tag = tag.replace('/', '%2F')
+          base_url = f"https://github.com/{repo}/releases/download/{encoded_tag}"
+
+          with open(index_path) as f:
+              index = json.load(f)
+
+          if tool not in index['tools']:
+              raise SystemExit(f"Tool '{tool}' is not in registry/index.json. "
+                               "Add an entry for it before pushing a release tag.")
+
+          entry = index['tools'][tool]
+          entry['latest'] = version
+          entry.setdefault('versions', {})[version] = {
+              "manifest":  f"{base_url}/manifest.json",
+              "checksums": f"{base_url}/checksums.txt",
+              "assets": {
+                  "linux/amd64": f"{base_url}/{tool}-linux-amd64",
+                  "linux/arm64": f"{base_url}/{tool}-linux-arm64",
+              },
+          }
+
+          with open(index_path, 'w') as f:
+              json.dump(index, f, indent=2)
+              f.write('\n')
+
+          print(f"Updated index: {tool} → {version}")
+          EOF
+
+      - name: Commit updated registry index
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add registry/index.json
+          git commit -m "registry: update ${{ steps.meta.outputs.tool }} to ${{ steps.meta.outputs.version }}"
+          git push origin HEAD:main

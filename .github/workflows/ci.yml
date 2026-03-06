@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: solai-agent/go.mod
+          cache-dependency-path: solai-agent/go.sum
+
+      - name: Test agent
+        working-directory: solai-agent
+        run: go test ./...
+
+      - name: Test tools
+        run: |
+          for mod in tools/*/go.mod; do
+            dir=$(dirname "$mod")
+            echo "Testing $dir"
+            go test ./... || exit 1
+          done
+        working-directory: ${{ github.workspace }}
+        shell: bash

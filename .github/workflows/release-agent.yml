@@ -1,0 +1,36 @@
+name: Release Agent
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: solai-agent/go.mod
+          cache-dependency-path: solai-agent/go.sum
+
+      - name: Build binaries
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o solai-linux-amd64 ./solai-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o solai-linux-arm64 ./solai-agent
+
+      - name: Generate checksums
+        run: sha256sum solai-linux-amd64 solai-linux-arm64 > checksums.txt
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            solai-linux-amd64
+            solai-linux-arm64
+            checksums.txt
