@@ -150,8 +150,10 @@ Capabilities are system-level features injected at startup. They are **not** LLM
 ### Installing tools
 
 ```bash
-solai install melodyogonna/token-price          # latest release
-solai install melodyogonna/token-price@v1.0.0   # specific tag
+solai install token-price                       # latest release (core/curated tool)
+solai install token-price@v1.0.0               # specific version
+solai install owner/repo                        # third-party tool (latest release)
+solai install owner/repo@v1.0.0                # third-party tool (specific tag)
 ```
 
 Tools are downloaded from GitHub releases and stored in `~/.solai/tools/`. The release must include:
