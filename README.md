@@ -4,12 +4,17 @@ An autonomous AI agent for the Solana blockchain. SolAI runs a continuous reason
 
 ---
 
+## Installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/melodyogonna/solai/main/install.sh | bash
+```
+
+This downloads the latest `solai` binary for your architecture (`x86_64` or `aarch64`) and places it in `~/.local/bin`. If that directory is not on your `PATH` the script will print the exact command to add it.
+
 ## Quick start
 
 ```bash
-cd solai-agent
-go build -o solai .
-
 # Select which model the coordinator uses
 solai config set model.provider google
 solai config set model.name gemini-2.5-pro
@@ -20,8 +25,8 @@ solai config set provider.google <your-google-api-key>
 
 solai config set user-goals "Monitor SOL price and report every cycle"
 
-solai install melodyogonna/token-price   # install a tool from GitHub
-solai start                              # launch the agent inside a sandbox
+solai install token-price   # install a tool
+solai start                 # launch the agent inside a sandbox
 ```
 
 ---
