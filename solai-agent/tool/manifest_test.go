@@ -12,6 +12,7 @@ func TestValidate_Valid(t *testing.T) {
 	m := Manifest{
 		Name:        "my-tool",
 		Description: "does something",
+		Version:     "1.0.0",
 		Executable:  "./bin/my-tool",
 	}
 	if err := m.Validate(); err != nil {
