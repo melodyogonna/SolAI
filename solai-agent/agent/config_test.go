@@ -117,27 +117,27 @@ func TestLoadConfigFrom_MismatchedProvider_Error(t *testing.T) {
 	}
 }
 
-func TestLoadConfigFrom_CycleInterval_Parsed(t *testing.T) {
+func TestLoadConfigFrom_CycleTimeout_Parsed(t *testing.T) {
 	cfg := defaultSolaiConfig()
-	cfg.CycleInterval = "10m"
+	cfg.CycleTimeout = "10m"
 	agentCfg, err := LoadConfigFrom(cfg, t.TempDir(), "")
 	if err != nil {
 		t.Fatalf("LoadConfigFrom: %v", err)
 	}
-	if agentCfg.CycleInterval != 10*time.Minute {
-		t.Errorf("CycleInterval: got %v, want 10m", agentCfg.CycleInterval)
+	if agentCfg.CycleTimeout != 10*time.Minute {
+		t.Errorf("CycleTimeout: got %v, want 10m", agentCfg.CycleTimeout)
 	}
 }
 
-func TestLoadConfigFrom_CycleInterval_DefaultWhenEmpty(t *testing.T) {
+func TestLoadConfigFrom_CycleTimeout_DefaultWhenEmpty(t *testing.T) {
 	cfg := defaultSolaiConfig()
-	cfg.CycleInterval = ""
+	cfg.CycleTimeout = ""
 	agentCfg, err := LoadConfigFrom(cfg, t.TempDir(), "")
 	if err != nil {
 		t.Fatalf("LoadConfigFrom: %v", err)
 	}
-	if agentCfg.CycleInterval != 5*time.Minute {
-		t.Errorf("CycleInterval: got %v, want default 5m", agentCfg.CycleInterval)
+	if agentCfg.CycleTimeout != 5*time.Minute {
+		t.Errorf("CycleTimeout: got %v, want default 5m", agentCfg.CycleTimeout)
 	}
 }
 

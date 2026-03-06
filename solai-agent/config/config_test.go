@@ -20,8 +20,8 @@ func useTempHome(t *testing.T) string {
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.CycleInterval != "5m" {
-		t.Errorf("CycleInterval: got %q, want %q", cfg.CycleInterval, "5m")
+	if cfg.CycleTimeout != "5m" {
+		t.Errorf("CycleTimeout: got %q, want %q", cfg.CycleTimeout, "5m")
 	}
 	if !cfg.Sandbox.ShareNet {
 		t.Error("Sandbox.ShareNet: expected true by default")
@@ -89,11 +89,11 @@ func TestSet_WalletSeed(t *testing.T) {
 	}
 }
 
-func TestSet_CycleInterval(t *testing.T) {
+func TestSet_CycleTimeout(t *testing.T) {
 	cfg := DefaultConfig()
-	_ = cfg.Set("cycle-interval", "10m")
-	if cfg.CycleInterval != "10m" {
-		t.Errorf("got %q", cfg.CycleInterval)
+	_ = cfg.Set("cycle-timeout", "10m")
+	if cfg.CycleTimeout != "10m" {
+		t.Errorf("got %q", cfg.CycleTimeout)
 	}
 }
 
@@ -162,7 +162,7 @@ func TestGet_AllKeys(t *testing.T) {
 	cfg.Providers["openai"] = "okey"
 	cfg.Providers["anthropic"] = "akey"
 	cfg.WalletSeed = "seed phrase"
-	cfg.CycleInterval = "15m"
+	cfg.CycleTimeout = "15m"
 	cfg.UserGoals = "do stuff"
 	cfg.Sandbox.ShareNet = false
 
@@ -173,7 +173,7 @@ func TestGet_AllKeys(t *testing.T) {
 		{"provider.openai", "okey"},
 		{"provider.anthropic", "akey"},
 		{"wallet-seed", "seed phrase"},
-		{"cycle-interval", "15m"},
+		{"cycle-timeout", "15m"},
 		{"user-goals", "do stuff"},
 		{"sandbox.share-net", "false"},
 	}
@@ -219,7 +219,7 @@ func TestSave_Load_RoundTrip(t *testing.T) {
 	cfg.Model.Name = "claude-opus-4-6"
 	cfg.Providers["anthropic"] = "sk-ant-test"
 	cfg.UserGoals = "analyze Solana DeFi"
-	cfg.CycleInterval = "30m"
+	cfg.CycleTimeout = "30m"
 	cfg.Sandbox.ShareNet = false
 
 	if err := cfg.Save(); err != nil {
@@ -243,8 +243,8 @@ func TestSave_Load_RoundTrip(t *testing.T) {
 	if loaded.UserGoals != cfg.UserGoals {
 		t.Errorf("UserGoals: got %q, want %q", loaded.UserGoals, cfg.UserGoals)
 	}
-	if loaded.CycleInterval != "30m" {
-		t.Errorf("CycleInterval: got %q", loaded.CycleInterval)
+	if loaded.CycleTimeout != "30m" {
+		t.Errorf("CycleTimeout: got %q", loaded.CycleTimeout)
 	}
 	if loaded.Sandbox.ShareNet {
 		t.Error("Sandbox.ShareNet: expected false")
@@ -260,8 +260,8 @@ func TestLoad_CreatesDefaultWhenAbsent(t *testing.T) {
 	}
 
 	// Defaults should be in place.
-	if cfg.CycleInterval != "5m" {
-		t.Errorf("CycleInterval: got %q", cfg.CycleInterval)
+	if cfg.CycleTimeout != "5m" {
+		t.Errorf("CycleTimeout: got %q", cfg.CycleTimeout)
 	}
 	if !cfg.Sandbox.ShareNet {
 		t.Error("Sandbox.ShareNet: expected true")
@@ -293,8 +293,8 @@ func TestLoad_ReturnsDefaultsForMissingFields(t *testing.T) {
 		t.Errorf("Model.Provider: got %q", cfg.Model.Provider)
 	}
 	// Defaults from DefaultConfig should apply for missing fields.
-	if cfg.CycleInterval != "5m" {
-		t.Errorf("CycleInterval: got %q, want 5m", cfg.CycleInterval)
+	if cfg.CycleTimeout != "5m" {
+		t.Errorf("CycleTimeout: got %q, want 5m", cfg.CycleTimeout)
 	}
 }
 

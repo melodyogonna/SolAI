@@ -39,7 +39,7 @@ SolAI operates in a **ReAct loop** (Reason → Act → Observe). Each cycle:
 2. It plans which tools to call and in what order.
 3. It calls those tools, observes results, and adapts.
 4. It produces a structured summary of what was accomplished, what failed, and what to try next.
-5. It sleeps for a configurable interval, then repeats.
+5. It immediately begins the next cycle. Each cycle has a configurable timeout (`cycle-timeout`) to prevent runaway LLM calls.
 
 Each cycle creates a **fresh agent instance** — there is no state carried between cycles at the LLM level. Persistent state lives in tools and on-chain.
 
@@ -77,9 +77,16 @@ solai start [--no-sandbox]         Start the autonomous agent
 | Key | Description |
 |---|---|
 | `user-goals` | Goals the agent should pursue autonomously |
-| `cycle-interval` | Sleep duration between cycles (default: `5m`) |
+| `cycle-timeout` | Maximum time allowed for a single cycle before it is cancelled and the next begins (default: `5m`) |
 | `wallet-seed` | BIP39 mnemonic — a new wallet is generated if unset |
 | `sandbox.share-net` | Allow agent sandbox network access (default: `true`) |
+
+**Solana settings:**
+
+| Key | Description |
+|---|---|
+| `solana.rpc-url` | Solana RPC endpoint (default: `https://api.mainnet-beta.solana.com`) |
+| `solana.commitment` | Commitment level: `finalized`, `confirmed`, or `processed` (default: `confirmed`) |
 
 Configuration is stored in `~/.solai/config.json` and written atomically.
 
@@ -135,13 +142,20 @@ Tools and the agent itself are isolated using [bubblewrap](https://github.com/co
 
 ### Capabilities
 
-Capabilities are system-level features injected at startup. They are **not** LLM tools — they run server-side and inform the prompt or grant sandbox permissions.
+Capabilities are system-level features injected at startup, separate from agentic tools.
 
 | Class | Visibility | Example |
 |---|---|---|
 | `Core` | Invisible — background infrastructure | `SystemManager` |
-| `Internal` | Known to the main LLM, hidden from tools | `WalletCapability` (exposes public key) |
+| `Internal` | Registered as callable LLM tools; also injected into the cycle prompt | `WalletCapability`, `SolanaCapability` |
 | `Regular` | Grants sandbox permissions to tools that request them | `NetworkManagerCapability` |
+
+**Built-in capabilities:**
+
+| Capability | Description |
+|---|---|
+| `wallet` | Returns the agent's Solana wallet public address |
+| `solana` | Direct Solana RPC: `get_balance`, `transfer_sol`, `get_recent_blockhash`, `send_transaction`, `get_account_info` |
 
 ---
 
