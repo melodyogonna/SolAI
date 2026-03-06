@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -213,8 +214,23 @@ func installFromGitHub(ref, toolsDir string) error {
 	return writeToolFiles(toolsDir, m.Name, manifestData, binaryData)
 }
 
+// validToolNameRE restricts tool names to lowercase letters, digits, and hyphens,
+// starting with a letter or digit. This prevents path traversal attacks when
+// the name is sourced from a remote manifest.
+var validToolNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+func validateToolName(name string) error {
+	if !validToolNameRE.MatchString(name) {
+		return fmt.Errorf("unsafe tool name %q: must match [a-z0-9][a-z0-9-]*", name)
+	}
+	return nil
+}
+
 // writeToolFiles persists manifest.json and the binary into toolsDir/<name>/.
 func writeToolFiles(toolsDir, name string, manifestData, binaryData []byte) error {
+	if err := validateToolName(name); err != nil {
+		return err
+	}
 	toolDir := filepath.Join(toolsDir, name)
 	binDir := filepath.Join(toolDir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {

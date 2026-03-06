@@ -29,6 +29,9 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 }
 
 func removeToolDir(toolsDir, name string) error {
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
+		return fmt.Errorf("invalid tool name %q", name)
+	}
 	toolDir := filepath.Join(toolsDir, name)
 	if _, err := os.Stat(toolDir); os.IsNotExist(err) {
 		return fmt.Errorf("tool %q is not installed", name)

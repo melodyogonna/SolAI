@@ -43,6 +43,15 @@ func TestUninstall_NotInstalled(t *testing.T) {
 	}
 }
 
+func TestUninstall_PathTraversal(t *testing.T) {
+	toolsDir := t.TempDir()
+	for _, name := range []string{"../evil", "..", ".", "", "a/b", "/absolute"} {
+		if err := removeToolDir(toolsDir, name); err == nil {
+			t.Errorf("expected error for unsafe name %q, got nil", name)
+		}
+	}
+}
+
 func TestUninstall_RemovesOnlyTargetTool(t *testing.T) {
 	toolsDir := t.TempDir()
 	for _, name := range []string{"tool-a", "tool-b"} {

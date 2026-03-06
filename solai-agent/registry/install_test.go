@@ -365,6 +365,35 @@ func TestInstall_AlreadyInstalled_GitHub(t *testing.T) {
 	}
 }
 
+// ---- validateToolName -------------------------------------------------------
+
+func TestValidateToolName_Valid(t *testing.T) {
+	for _, name := range []string{"token-price", "my-tool", "birdeye", "tool123", "a"} {
+		if err := validateToolName(name); err != nil {
+			t.Errorf("expected %q to be valid, got: %v", name, err)
+		}
+	}
+}
+
+func TestValidateToolName_Invalid(t *testing.T) {
+	for _, name := range []string{
+		"",
+		".",
+		"..",
+		"../evil",
+		"/absolute",
+		"has/slash",
+		"has space",
+		"UPPER",
+		"-starts-with-hyphen",
+		"has.dot",
+	} {
+		if err := validateToolName(name); err == nil {
+			t.Errorf("expected %q to be invalid, got nil error", name)
+		}
+	}
+}
+
 // ---- parseShortRef ----------------------------------------------------------
 
 func TestParseShortRef_NameOnly(t *testing.T) {
