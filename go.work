@@ -1,4 +1,5 @@
 go 1.25.7
 
 use ./solai-agent
+
 use ./tools/token-price
