@@ -1,9 +1,13 @@
 {
   "name": "token-price",
   "description": "Fetches current USD prices and 24h change for Solana tokens. Accepts token symbols (SOL, USDC, USDT, JUP, BONK, WIF, RAY, PYTH) or raw mint addresses. Uses an internal LLM agent to interpret the request and query Jupiter's price API.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "executable": "./bin/token-price",
   "required_capabilities": ["network-manager"],
+  "env": [
+    { "name": "JUPITER_API_KEY",       "sensitive": true,  "required": false },
+    { "name": "JUPITER_RATE_LIMIT_RPS", "sensitive": false, "required": false }
+  ],
   "timeout": "90s",
   "llm_options": {
     "primary": "gemini-2.5-flash",

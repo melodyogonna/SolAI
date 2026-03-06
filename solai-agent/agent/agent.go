@@ -5,12 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
+	"github.com/melodyogonna/solai/ratelimit"
 	"github.com/melodyogonna/solai/solai-agent/capability"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
 	lctools "github.com/tmc/langchaingo/tools"
 )
+
+// cycleRetry is the retry strategy used for each agent cycle.
+// It retries up to 3 times with exponential backoff starting at 2s, capped at 30s.
+var cycleRetry = ratelimit.NewExponentialRetry(3, 2*time.Second, 30*time.Second, 2.0)
 
 // Run is the main entry point for the autonomous agent loop.
 // It blocks until ctx is cancelled, running one agent cycle per CycleInterval.
@@ -61,19 +67,41 @@ func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManag
 	}
 }
 
-// runCycle executes one complete ReAct cycle.
-// It creates a fresh agent and executor each cycle to avoid state bleed
-// across cycles. Returns the agent's final answer or an error.
+// runCycle executes one complete ReAct cycle with exponential retry on transient errors.
+// It creates a fresh agent and executor each attempt to avoid state bleed.
+// Non-transient errors (ErrNotFinished, context cancellation/timeout) are not retried.
 func runCycle(ctx context.Context, cfg Config, agentTools []lctools.Tool, prompt string) (string, error) {
-	a := agents.NewOneShotAgent(
-		cfg.LLM,
-		agentTools,
-		agents.WithMaxIterations(10),
-		agents.WithPromptPrefix(cfg.SystemPrompt),
-	)
-	executor := agents.NewExecutor(a)
-	return chains.Run(ctx, executor, prompt)
+	var answer string
+	err := cycleRetry.Execute(ctx, func(ctx context.Context) error {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
+			return ctx.Err()
+		}
+		a := agents.NewOneShotAgent(
+			cfg.LLM,
+			agentTools,
+			agents.WithMaxIterations(10),
+			agents.WithPromptPrefix(cfg.SystemPrompt),
+		)
+		executor := agents.NewExecutor(a)
+		var err error
+		answer, err = chains.Run(ctx, executor, prompt)
+		if errors.Is(err, agents.ErrNotFinished) {
+			// Not a transient error — stop retrying immediately.
+			return &noRetryError{err}
+		}
+		return err
+	})
+	var nre *noRetryError
+	if errors.As(err, &nre) {
+		return "", nre.err
+	}
+	return answer, err
 }
+
+// noRetryError wraps an error to signal that cycleRetry should not attempt further retries.
+type noRetryError struct{ err error }
+
+func (e *noRetryError) Error() string { return e.err.Error() }
 
 // buildCyclePrompt assembles the input string passed to chains.Run each cycle.
 // It combines the capability section (e.g. wallet address) with the user's goals.

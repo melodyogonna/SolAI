@@ -7,13 +7,16 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/melodyogonna/solai/ratelimit"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
 	lctools "github.com/tmc/langchaingo/tools"
 )
+
 
 var knownTokens = map[string]string{
 	"SOL":  "So11111111111111111111111111111111111111112",
@@ -38,7 +41,9 @@ var mintToSymbol = func() map[string]string {
 
 // jupiterTool is a langchaingo tool the internal agent calls to fetch live
 // Solana token prices from Jupiter's price API.
-type jupiterTool struct{}
+type jupiterTool struct {
+	limiter ratelimit.RateLimitStrategy
+}
 
 func (t *jupiterTool) Name() string { return "token-price" }
 
@@ -56,10 +61,14 @@ Returns JSON with price_usd and change_24h_pct for each token.`,
 	)
 }
 
-func (t *jupiterTool) Call(_ context.Context, input string) (string, error) {
+func (t *jupiterTool) Call(ctx context.Context, input string) (string, error) {
 	mints := resolveToMints(strings.Split(input, ","))
 	if len(mints) == 0 {
 		return "", fmt.Errorf("no recognised token symbols or mint addresses in: %q", input)
+	}
+
+	if err := t.limiter.Wait(ctx); err != nil {
+		return "", fmt.Errorf("rate limiter: %w", err)
 	}
 
 	prices, err := fetchPrices(mints)
@@ -72,6 +81,21 @@ func (t *jupiterTool) Call(_ context.Context, input string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// newJupiterLimiter builds a rate limiter for Jupiter API calls.
+// The limit is read from JUPITER_RATE_LIMIT_RPS. If unset, it defaults to 1 rps
+// (Jupiter's unauthenticated limit). Paid plan users should set this env var to
+// match their tier (e.g. 10 for Pro, 50 for Business — see portal.jup.ag/pricing).
+func newJupiterLimiter() ratelimit.RateLimitStrategy {
+	const defaultRPS = 1
+	rps := defaultRPS
+	if v := os.Getenv("JUPITER_RATE_LIMIT_RPS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			rps = n
+		}
+	}
+	return ratelimit.NewFixedWindowLimiter(rps, time.Second)
 }
 
 func main() {
@@ -89,7 +113,7 @@ func main() {
 		return
 	}
 
-	tools := []lctools.Tool{&jupiterTool{}}
+	tools := []lctools.Tool{&jupiterTool{limiter: newJupiterLimiter()}}
 	agent := agents.NewOneShotAgent(llm, tools,
 		agents.WithMaxIterations(5),
 		agents.WithPromptPrefix(agentSystemPrompt),
