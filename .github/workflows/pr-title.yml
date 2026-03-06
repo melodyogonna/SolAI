@@ -1,0 +1,30 @@
+name: PR Title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title format
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # Required format: [Package] Title
+          # Both the bracketed label and the text after must start with a capital letter.
+          if ! echo "$TITLE" | grep -qP '^\[[A-Z][^\]]*\] [A-Z]'; then
+            echo "Invalid PR title: $TITLE"
+            echo ""
+            echo "Required format: [Package] Title"
+            echo "Examples:"
+            echo "  [Solai] Add sandbox support"
+            echo "  [Token-price] Fix price fetching for BONK"
+            echo ""
+            echo "Rules:"
+            echo "  - Must start with a bracketed label: [Label]"
+            echo "  - Label must start with a capital letter"
+            echo "  - Title text after the label must start with a capital letter"
+            exit 1
+          fi
