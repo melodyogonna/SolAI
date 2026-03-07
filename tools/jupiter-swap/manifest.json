@@ -12,9 +12,9 @@
   "llm_options": {
     "primary": "gemini-2.5-pro",
     "supported": [
-      { "model": "gemini-2.5-flash",         "provider": "google"    },
-      { "model": "gpt-4o-mini",              "provider": "openai"    },
-      { "model": "claude-haiku-4-5-20251001","provider": "anthropic" }
+      { "model": "gemini-2.5-pro",  "provider": "google"    },
+      { "model": "gpt-4o",          "provider": "openai"    },
+      { "model": "claude-opus-4-6", "provider": "anthropic" }
     ]
   }
 }
