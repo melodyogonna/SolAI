@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -17,7 +18,6 @@ import (
 	lctools "github.com/tmc/langchaingo/tools"
 )
 
-
 var knownTokens = map[string]string{
 	"SOL":  "So11111111111111111111111111111111111111112",
 	"USDC": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -27,6 +27,9 @@ var knownTokens = map[string]string{
 	"WIF":  "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
 	"PYTH": "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
 	"RAY":  "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+	"ORCA": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
+	"MNGO": "MangoCzJ36AjZyKwVj3VnYU4GTonjfVEnJmvvWaxLac",
+	"SAMO": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
 }
 
 var mintToSymbol = func() map[string]string {
@@ -37,15 +40,15 @@ var mintToSymbol = func() map[string]string {
 	return m
 }()
 
-// ---- Jupiter price tool (internal langchaingo tool) ----------------------
+var httpClient = &http.Client{Timeout: 10 * time.Second}
 
-// jupiterTool is a langchaingo tool the internal agent calls to fetch live
-// Solana token prices from Jupiter's price API.
+// ---- Jupiter price tool -----------------------------------------------------
+
 type jupiterTool struct {
 	limiter ratelimit.RateLimitStrategy
 }
 
-func (t *jupiterTool) Name() string { return "token-price" }
+func (t *jupiterTool) Name() string { return "jupiter-price" }
 
 func (t *jupiterTool) Description() string {
 	syms := make([]string, 0, len(knownTokens))
@@ -53,10 +56,10 @@ func (t *jupiterTool) Description() string {
 		syms = append(syms, s)
 	}
 	return fmt.Sprintf(
-		`Fetches current USD prices and 24h change for Solana tokens from Jupiter.
-Input: comma-separated token symbols (%s) or raw Solana mint addresses.
-Example input: "SOL,USDC,JUP"
-Returns JSON with price_usd and change_24h_pct for each token.`,
+		`Fetch current USD prices and 24h change for Solana tokens from Jupiter.
+Input: comma-separated token symbols (%s) or raw mint addresses.
+Example: "SOL,USDC,JUP"
+Returns JSON with price_usd and change_24h_pct. Best for accurate prices of well-known tokens.`,
 		strings.Join(syms, ", "),
 	)
 }
@@ -66,16 +69,13 @@ func (t *jupiterTool) Call(ctx context.Context, input string) (string, error) {
 	if len(mints) == 0 {
 		return "", fmt.Errorf("no recognised token symbols or mint addresses in: %q", input)
 	}
-
 	if err := t.limiter.Wait(ctx); err != nil {
 		return "", fmt.Errorf("rate limiter: %w", err)
 	}
-
-	prices, err := fetchPrices(mints)
+	prices, err := fetchJupiterPrices(mints)
 	if err != nil {
 		return "", err
 	}
-
 	data, err := json.Marshal(prices)
 	if err != nil {
 		return "", err
@@ -83,20 +83,81 @@ func (t *jupiterTool) Call(ctx context.Context, input string) (string, error) {
 	return string(data), nil
 }
 
-// newJupiterLimiter builds a rate limiter for Jupiter API calls.
-// The limit is read from JUPITER_RATE_LIMIT_RPS. If unset, it defaults to 1 rps
-// (Jupiter's unauthenticated limit). Paid plan users should set this env var to
-// match their tier (e.g. 10 for Pro, 50 for Business — see portal.jup.ag/pricing).
-func newJupiterLimiter() ratelimit.RateLimitStrategy {
-	const defaultRPS = 1
-	rps := defaultRPS
-	if v := os.Getenv("JUPITER_RATE_LIMIT_RPS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			rps = n
+// ---- DexScreener search tool ------------------------------------------------
+
+type dexSearchTool struct{}
+
+func (t *dexSearchTool) Name() string { return "dexscreener-search" }
+
+func (t *dexSearchTool) Description() string {
+	return `Search for Solana tokens on DexScreener by name, symbol, or keyword.
+Input: a search query (e.g. "BONK", "dogwifhat", "meme coin").
+Returns top Solana pairs with price, 24h volume, liquidity, and price change.
+Best for discovering tokens, finding new/unknown tokens, or market discovery.`
+}
+
+func (t *dexSearchTool) Call(ctx context.Context, input string) (string, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return "", fmt.Errorf("search query is required")
+	}
+	apiURL := "https://api.dexscreener.com/latest/dex/search?q=" + url.QueryEscape(input)
+	body, err := getJSON(ctx, apiURL)
+	if err != nil {
+		return "", err
+	}
+	var resp dexSearchResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("parsing DexScreener response: %w", err)
+	}
+	summaries := filterAndSummarise(resp.Pairs, 8)
+	data, _ := json.Marshal(summaries)
+	return string(data), nil
+}
+
+// ---- DexScreener token tool -------------------------------------------------
+
+type dexTokenTool struct{}
+
+func (t *dexTokenTool) Name() string { return "dexscreener-token" }
+
+func (t *dexTokenTool) Description() string {
+	return `Get detailed market data for Solana tokens by mint address from DexScreener.
+Input: comma-separated mint addresses (max 10).
+Returns pools, price, volume, and liquidity across all DEXes for those tokens.
+Best when you already have a mint address and need pool-level market detail.`
+}
+
+func (t *dexTokenTool) Call(ctx context.Context, input string) (string, error) {
+	parts := strings.Split(input, ",")
+	var addresses []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			addresses = append(addresses, p)
+		}
+		if len(addresses) == 10 {
+			break
 		}
 	}
-	return ratelimit.NewFixedWindowLimiter(rps, time.Second)
+	if len(addresses) == 0 {
+		return "", fmt.Errorf("at least one mint address is required")
+	}
+	apiURL := "https://api.dexscreener.com/latest/dex/tokens/" + strings.Join(addresses, ",")
+	body, err := getJSON(ctx, apiURL)
+	if err != nil {
+		return "", err
+	}
+	var resp dexSearchResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("parsing DexScreener response: %w", err)
+	}
+	summaries := filterAndSummarise(resp.Pairs, 10)
+	data, _ := json.Marshal(summaries)
+	return string(data), nil
 }
+
+// ---- main -------------------------------------------------------------------
 
 func main() {
 	var input ToolInput
@@ -113,9 +174,13 @@ func main() {
 		return
 	}
 
-	tools := []lctools.Tool{&jupiterTool{limiter: newJupiterLimiter()}}
+	tools := []lctools.Tool{
+		&jupiterTool{limiter: newJupiterLimiter()},
+		&dexSearchTool{},
+		&dexTokenTool{},
+	}
 	agent := agents.NewOneShotAgent(llm, tools,
-		agents.WithMaxIterations(5),
+		agents.WithMaxIterations(8),
 		agents.WithPromptPrefix(agentSystemPrompt),
 	)
 	executor := agents.NewExecutor(agent)
@@ -133,10 +198,19 @@ func main() {
 	writeSuccess(out)
 }
 
-// ---- Helpers --------------------------------------------------------------
+// ---- Helpers ----------------------------------------------------------------
 
-// resolveToMints converts a list of token symbols or raw mint addresses into
-// mint addresses, skipping unrecognised entries.
+func newJupiterLimiter() ratelimit.RateLimitStrategy {
+	const defaultRPS = 1
+	rps := defaultRPS
+	if v := os.Getenv("JUPITER_RATE_LIMIT_RPS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			rps = n
+		}
+	}
+	return ratelimit.NewFixedWindowLimiter(rps, time.Second)
+}
+
 func resolveToMints(tokens []string) []string {
 	seen := make(map[string]bool)
 	var mints []string
@@ -158,7 +232,7 @@ func resolveToMints(tokens []string) []string {
 	return mints
 }
 
-func fetchPrices(mints []string) ([]TokenPrice, error) {
+func fetchJupiterPrices(mints []string) ([]TokenPrice, error) {
 	baseURL := "https://lite-api.jup.ag/price/v3"
 	apiKey := os.Getenv("JUPITER_API_KEY")
 	if apiKey != "" {
@@ -174,9 +248,9 @@ func fetchPrices(mints []string) ([]TokenPrice, error) {
 		req.Header.Set("x-api-key", apiKey)
 	}
 
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("HTTP request: %w", err)
+		return nil, fmt.Errorf("Jupiter HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -211,6 +285,53 @@ func fetchPrices(mints []string) ([]TokenPrice, error) {
 		})
 	}
 	return prices, nil
+}
+
+func getJSON(ctx context.Context, apiURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request to %s: %w", apiURL, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned HTTP %d: %s", resp.StatusCode, body)
+	}
+	return body, nil
+}
+
+// filterAndSummarise filters pairs to Solana-only and returns the top n summaries.
+func filterAndSummarise(pairs []dexPair, n int) []DexPairSummary {
+	var summaries []DexPairSummary
+	for _, p := range pairs {
+		if p.ChainID != "solana" {
+			continue
+		}
+		summaries = append(summaries, DexPairSummary{
+			Symbol:       p.BaseToken.Symbol,
+			Name:         p.BaseToken.Name,
+			Mint:         p.BaseToken.Address,
+			PriceUSD:     p.PriceUSD,
+			Volume24hUSD: p.Volume.H24,
+			LiquidityUSD: p.Liquidity.USD,
+			Change24hPct: p.PriceChange.H24,
+			Change1hPct:  p.PriceChange.H1,
+			MarketCapUSD: p.MarketCap,
+			DEX:          p.DexID,
+		})
+		if len(summaries) == n {
+			break
+		}
+	}
+	return summaries
 }
 
 func writeSuccess(data json.RawMessage) {

@@ -1,4 +1,4 @@
-module github.com/melodyogonna/solai/tools/token-price
+module github.com/melodyogonna/solai/jupiter-swap
 
 go 1.25.0
 
