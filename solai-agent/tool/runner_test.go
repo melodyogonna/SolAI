@@ -1,8 +1,6 @@
 package tool
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -69,77 +67,6 @@ func TestParseTaskInput_JSONWithTasksPreserved(t *testing.T) {
 	}
 }
 
-// ---- parseToolOutput --------------------------------------------------------
-
-func TestParseToolOutput_Success(t *testing.T) {
-	raw := `{"type":"success","output":{"price":142.5}}`
-	out, err := parseToolOutput([]byte(raw))
-	if err != nil {
-		t.Fatalf("parseToolOutput: %v", err)
-	}
-	if out.Type != "success" {
-		t.Errorf("Type: got %q, want %q", out.Type, "success")
-	}
-	var result map[string]any
-	if err := json.Unmarshal(out.Output, &result); err != nil {
-		t.Fatalf("Output: %v", err)
-	}
-	if result["price"].(float64) != 142.5 {
-		t.Errorf("price: got %v", result["price"])
-	}
-}
-
-func TestParseToolOutput_Error(t *testing.T) {
-	raw := `{"type":"error","output":"something went wrong"}`
-	out, err := parseToolOutput([]byte(raw))
-	if err != nil {
-		t.Fatalf("parseToolOutput: %v", err)
-	}
-	if out.Type != "error" {
-		t.Errorf("Type: got %q, want error", out.Type)
-	}
-}
-
-func TestParseToolOutput_MissingType(t *testing.T) {
-	raw := `{"output":"no type"}`
-	_, err := parseToolOutput([]byte(raw))
-	if err == nil {
-		t.Fatal("expected error for missing 'type' field")
-	}
-	if !strings.Contains(err.Error(), "type") {
-		t.Errorf("error should mention 'type': %v", err)
-	}
-}
-
-func TestParseToolOutput_InvalidJSON(t *testing.T) {
-	_, err := parseToolOutput([]byte("{bad json"))
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-}
-
-func TestParseToolOutput_StringOutput(t *testing.T) {
-	raw := `{"type":"success","output":"just a string"}`
-	out, err := parseToolOutput([]byte(raw))
-	if err != nil {
-		t.Fatalf("parseToolOutput: %v", err)
-	}
-	if out.Type != "success" {
-		t.Errorf("Type: got %q", out.Type)
-	}
-}
-
-func TestParseToolOutput_NullOutput(t *testing.T) {
-	raw := `{"type":"success","output":null}`
-	out, err := parseToolOutput([]byte(raw))
-	if err != nil {
-		t.Fatalf("parseToolOutput: %v", err)
-	}
-	if out.Type != "success" {
-		t.Errorf("Type: got %q", out.Type)
-	}
-}
-
 // ---- buildBwrapArgs ---------------------------------------------------------
 
 func TestBuildBwrapArgs_MinimalPolicy(t *testing.T) {
@@ -171,10 +98,11 @@ func TestBuildBwrapArgs_MinimalPolicy(t *testing.T) {
 		}
 	}
 
-	// Last argument should be the executable inside /app.
+	// Last argument should be the executable inside /app, preserving any
+	// subdirectory structure from the manifest's executable field.
 	last := args[len(args)-1]
-	if last != "/app/my-tool" {
-		t.Errorf("last arg: got %q, want /app/my-tool", last)
+	if last != "/app/bin/my-tool" {
+		t.Errorf("last arg: got %q, want /app/bin/my-tool", last)
 	}
 }
 
@@ -229,11 +157,13 @@ func TestBuildBwrapArgs_FSBinds(t *testing.T) {
 	}
 }
 
-func TestBuildBwrapArgs_ExecutableStripsLeadingDotSlash(t *testing.T) {
+func TestBuildBwrapArgs_ExecutablePreservesSubdir(t *testing.T) {
+	// "./bin/token-price" must map to "/app/bin/token-price" inside the sandbox,
+	// not "/app/token-price" — the bin/ subdirectory must be preserved.
 	policy := SandboxPolicy{}
 	args := buildBwrapArgs(policy, "/tools/my-tool", "./bin/token-price")
 	last := args[len(args)-1]
-	if last != "/app/token-price" {
-		t.Errorf("last arg: got %q, want /app/token-price", last)
+	if last != "/app/bin/token-price" {
+		t.Errorf("last arg: got %q, want /app/bin/token-price", last)
 	}
 }

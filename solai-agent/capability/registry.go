@@ -76,7 +76,7 @@ func (m *CapabilityManager) IsRegularCapabilityAvailable(name string) bool {
 }
 
 // capabilityTool adapts a Capability to the langchaingo tools.Tool interface
-// so Internal capabilities can be called by the LLM via the ReAct loop.
+// so Internal and Regular capabilities can be called by the LLM via the ReAct loop.
 type capabilityTool struct{ c Capability }
 
 func (t capabilityTool) Name() string        { return t.c.Name() }
@@ -85,32 +85,81 @@ func (t capabilityTool) Call(ctx context.Context, input string) (string, error) 
 	return t.c.Execute(ctx, input)
 }
 
-// GetInternalTools returns all Internal capabilities wrapped as langchaingo
-// tools so the ReAct agent can call them directly.
-func (m *CapabilityManager) GetInternalTools() []lctools.Tool {
-	internals := m.GetByClass(Internal)
-	tools := make([]lctools.Tool, len(internals))
-	for i, c := range internals {
-		tools[i] = capabilityTool{c}
+// GetAgentTools returns Internal and Regular capabilities wrapped as
+// langchaingo tools so the coordinator's ReAct agent can call them directly.
+// Capabilities with an empty Description are excluded — they are infrastructure
+// concerns (e.g. network-manager) that the LLM does not need to invoke.
+func (m *CapabilityManager) GetAgentTools() []lctools.Tool {
+	var tools []lctools.Tool
+	for _, c := range m.capabilities {
+		if (c.Class() == Internal || c.Class() == Regular) && c.Description() != "" {
+			tools = append(tools, capabilityTool{c})
+		}
 	}
 	return tools
 }
 
+// GetByName returns the capability with the given name, or nil if not found.
+func (m *CapabilityManager) GetByName(name string) Capability {
+	for _, c := range m.capabilities {
+		if c.Name() == name {
+			return c
+		}
+	}
+	return nil
+}
+
 // BuildCapabilityPromptSection generates a Markdown block describing all
-// Internal capabilities, for injection into the per-cycle prompt so the LLM
-// is aware of them.
-// Returns an empty string if there are no Internal capabilities.
+// Internal and Regular capabilities for injection into the coordinator's
+// per-cycle prompt. Capabilities with an empty Description are omitted.
+// Returns an empty string if none remain.
 func (m *CapabilityManager) BuildCapabilityPromptSection() string {
-	internals := m.GetByClass(Internal)
-	if len(internals) == 0 {
+	var visible []Capability
+	for _, c := range m.capabilities {
+		if (c.Class() == Internal || c.Class() == Regular) && c.Description() != "" {
+			visible = append(visible, c)
+		}
+	}
+	if len(visible) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	for i, c := range internals {
+	for i, c := range visible {
 		fmt.Fprintf(&b, "- **%s**: %s", c.Name(), c.Description())
-		if i < len(internals)-1 {
+		if i < len(visible)-1 {
 			b.WriteString("\n")
 		}
 	}
 	return b.String()
+}
+
+// BuildToolCapabilitySection generates the capability request documentation
+// injected into every agentic tool's system prompt. It covers all Regular
+// capabilities that have a non-empty ToolRequestDescription.
+// Returns an empty string if no such capabilities exist.
+func (m *CapabilityManager) BuildToolCapabilitySection() string {
+	var parts []string
+	for _, c := range m.capabilities {
+		if c.Class() != Regular {
+			continue
+		}
+		desc := c.ToolRequestDescription()
+		if desc == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("### %s\n%s", c.Name(), desc))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join([]string{
+		"## Capability Requests",
+		"To request a coordinator capability, write to stdout:",
+		`{"type": "request", "capability": "<name>", "action": "<action>", "input": "<value>"}`,
+		"Your execution pauses until a response arrives on stdin:",
+		`{"type": "response", "output": "<value>"}`,
+		`{"type": "response", "error": "<message>"}`,
+		"",
+		strings.Join(parts, "\n\n"),
+	}, "\n")
 }

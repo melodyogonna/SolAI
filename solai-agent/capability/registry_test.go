@@ -21,9 +21,10 @@ type stubCapability struct {
 	desc  string
 }
 
-func (s *stubCapability) Name() string                                      { return s.name }
-func (s *stubCapability) Class() CapabilityClass                            { return s.class }
-func (s *stubCapability) Description() string                               { return s.desc }
+func (s *stubCapability) Name() string                                        { return s.name }
+func (s *stubCapability) Class() CapabilityClass                              { return s.class }
+func (s *stubCapability) Description() string                                 { return s.desc }
+func (s *stubCapability) ToolRequestDescription() string                      { return "" }
 func (s *stubCapability) Execute(_ context.Context, _ string) (string, error) { return s.name, nil }
 
 // ---- Register / SetUp -------------------------------------------------------
@@ -138,7 +139,7 @@ func TestIsRegularCapabilityAvailable_NotPresent(t *testing.T) {
 
 // ---- BuildCapabilityPromptSection -------------------------------------------
 
-func TestBuildCapabilityPromptSection_InternalOnly(t *testing.T) {
+func TestBuildCapabilityPromptSection_InternalAndRegular(t *testing.T) {
 	freshRegistry(t)
 	Register("wallet", func() Capability {
 		return &stubCapability{name: "wallet", class: Internal, desc: "your wallet is 0xabc"}
@@ -150,28 +151,29 @@ func TestBuildCapabilityPromptSection_InternalOnly(t *testing.T) {
 
 	section := cm.BuildCapabilityPromptSection()
 	if section == "" {
-		t.Fatal("expected non-empty section for Internal capabilities")
+		t.Fatal("expected non-empty section for Internal+Regular capabilities")
 	}
 	if !strings.Contains(section, "wallet") {
 		t.Errorf("expected wallet in section: %q", section)
 	}
 	if !strings.Contains(section, "your wallet is 0xabc") {
-		t.Errorf("expected description in section: %q", section)
+		t.Errorf("expected wallet description in section: %q", section)
 	}
-	// Regular capability should NOT appear in the prompt section.
-	if strings.Contains(section, "network") {
-		t.Errorf("Regular capability should not appear in prompt section: %q", section)
+	// Regular capability also appears in the prompt section.
+	if !strings.Contains(section, "network") {
+		t.Errorf("expected Regular capability in section: %q", section)
 	}
 }
 
-func TestBuildCapabilityPromptSection_NoInternals(t *testing.T) {
+func TestBuildCapabilityPromptSection_RegularOnly(t *testing.T) {
 	freshRegistry(t)
 	Register("net", func() Capability {
 		return &stubCapability{name: "net", class: Regular, desc: "network"}
 	})
 	cm := SetUp([]string{"net"})
-	if section := cm.BuildCapabilityPromptSection(); section != "" {
-		t.Errorf("expected empty section with no Internal capabilities, got %q", section)
+	// Regular capabilities are visible to the coordinator LLM.
+	if section := cm.BuildCapabilityPromptSection(); section == "" {
+		t.Error("expected non-empty section for Regular capability")
 	}
 }
 

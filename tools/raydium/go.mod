@@ -1,12 +1,8 @@
-module github.com/melodyogonna/solai/tools/token-price
+module github.com/melodyogonna/solai/raydium
 
-go 1.25.0
+go 1.25
 
-require (
-	github.com/joho/godotenv v1.5.1
-	github.com/melodyogonna/solai/ratelimit v0.0.0-20260306215652-f12013591d3c
-	github.com/tmc/langchaingo v0.1.14
-)
+require github.com/tmc/langchaingo v0.1.14
 
 require (
 	cloud.google.com/go v0.116.0 // indirect

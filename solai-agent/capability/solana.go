@@ -55,6 +55,9 @@ func (s *SolanaCapability) Name() string { return "solana" }
 
 func (s *SolanaCapability) Class() CapabilityClass { return Internal }
 
+// ToolRequestDescription implements Capability. Solana is Internal — not requestable by tools.
+func (s *SolanaCapability) ToolRequestDescription() string { return "" }
+
 // Description is injected into each cycle prompt so the LLM knows how to use
 // the Solana capability.
 func (s *SolanaCapability) Description() string {

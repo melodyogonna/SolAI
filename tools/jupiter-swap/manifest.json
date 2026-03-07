@@ -1,14 +1,14 @@
 {
-  "name": "token-price",
-  "description": "Fetches Solana token prices and market data. Supports price lookup for known tokens (SOL, USDC, JUP, etc.) via Jupiter, plus market discovery, trend analysis, and unknown token search via DexScreener.",
-  "version": "0.3.0",
-  "executable": "./bin/token-price",
+  "name": "jupiter-swap",
+  "description": "Quotes and builds Solana token swap transactions using the Jupiter aggregator. Requests the user's wallet address from the coordinator, fetches the best route and quote, then returns both the quote details and a serialized transaction for the coordinator to sign and submit via the Solana capability.",
+  "version": "0.1.0",
+  "executable": "jupiter-swap",
   "required_capabilities": ["network-manager"],
   "env": [
     { "name": "JUPITER_API_KEY",        "sensitive": true,  "required": false },
     { "name": "JUPITER_RATE_LIMIT_RPS", "sensitive": false, "required": false }
   ],
-  "timeout": "90s",
+  "timeout": "120s",
   "llm_options": {
     "primary": "gemini-2.5-pro",
     "supported": [

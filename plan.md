@@ -10,7 +10,7 @@ An autonomous AI agent that interacts with the Solana blockchain. Built in Go us
 
 - **Hierarchical multi-agent system.** SolAI is a coordinator agent that delegates to subagents. Each agentic tool is itself an LLM agent — it receives a prompt from the main agent, reasons about it using its own LLM, calls the specific capability it wraps (an API, an RPC endpoint, a smart contract), and returns a structured result.
 - **The coordinator plans; subagents execute.** The main agent never calls external APIs or executes transactions directly. It decomposes goals into prompts and dispatches them to the appropriate subagent tools.
-- **Fresh state per cycle.** A new coordinator agent instance is created each cycle. No LLM state bleeds between cycles. Persistent state lives in tools and on-chain.
+- **Two-layer memory across cycles.** A new coordinator agent instance is created each cycle, but state is carried forward via two mechanisms: (1) a shared `ConversationWindowBuffer` passed to each executor — `chains.Call` automatically saves and loads the last 3 cycles' conversation; (2) an explicit `memory` capability tool the LLM calls to persist structured state (current plan, observations, pending tasks). Together they allow multi-cycle strategies without unbounded context growth.
 - **Sandboxed by default.** Both the coordinator and each subagent tool run in isolated bubblewrap (bwrap) sandboxes. Capabilities explicitly widen what is allowed.
 - **Tools as plugins.** Agentic tools are packaged and distributed as GitHub releases, installable via `solai install`. No code changes to the agent are required to add a tool.
 
@@ -51,12 +51,19 @@ SystemManager.Setup()
   └─ Discover tools from /tools/ — load manifests, validate capabilities
   └─ Log configured LLM providers
 
-buildCyclePrompt()
-  └─ Append capability context (e.g. wallet public key) to user goals
+buildCyclePrompt()   [rebuilt every cycle]
+  └─ ## Available Tools — capabilities with non-empty Description + agentic tools
+  └─ ## Agent Memory — injected from MemoryCapability.BuildMemorySection() if non-empty
+  └─ ## Your Goals — user goals from config
 
 runCycle()  [OneShotAgent, max 10 iterations, exponential retry up to 3×]
   └─ ReAct: Reason → pick subagent → formulate prompt → Act → Observe result → repeat
-  └─ Each "Act" spawns a subagent process: writes ToolInput to stdin, reads ToolOutput from stdout
+  └─ Each "Act" spawns a subagent process:
+       writes ToolInput (type=input, overview, tasks, available_capabilities) to stdin
+       runs bidirectional request/response loop:
+         ← tool may write {"type":"request",...} for capability actions
+         → coordinator dispatches to Regular capability, writes {"type":"response",...}
+       reads final {"type":"success"|"error",...} from stdout
   └─ On transient error (e.g. LLM rate limit): retry with 2s→30s exponential backoff
   └─ On ErrNotFinished: log warning, no retry, continue to next cycle
   └─ On cycle_timeout: log warning, continue to next cycle
@@ -87,25 +94,41 @@ Agentic tools are standalone executables (any language) distributed as GitHub re
 
 ### IPC protocol
 
-The coordinator communicates with each subagent via stdin/stdout JSON. The tool process lifetime is one invocation — it receives a prompt, runs its internal agent loop to completion, writes its result, and exits.
+The coordinator communicates with each subagent via **bidirectional** stdin/stdout JSON. All messages carry a `type` field so each side can distinguish them without additional framing. The tool process lifetime is one invocation — it receives a prompt, runs its internal agent loop, optionally requests coordinator capabilities, writes its final result, and exits.
 
-**Input** (coordinator → subagent, written to stdin):
+**Initial input** (coordinator → subagent, written to stdin at startup):
 ```json
 {
+  "type": "input",
   "overview": "One sentence describing the objective.",
-  "tasks": ["Step 1", "Step 2", "Step 3"]
+  "tasks": ["Step 1", "Step 2", "Step 3"],
+  "available_capabilities": "## Capability Requests\n..."
 }
 ```
 
-The `overview` and `tasks` are a structured prompt. The subagent's internal LLM interprets them and determines how to use its wrapped capability to satisfy the request.
+`available_capabilities` is a generated Markdown block documenting every `Regular` capability that has a non-empty `ToolRequestDescription`. It describes the request/response protocol and the available actions for each capability. Empty string when no such capabilities are registered.
 
-**Output** (subagent → coordinator, read from stdout):
+**Final output** (subagent → coordinator, written to stdout):
 ```json
 { "type": "success", "output": <any JSON value> }
 { "type": "error",   "output": "human-readable error string" }
 ```
 
 Errors are surfaced as strings so the coordinator observes them as Observations in its ReAct loop and can adapt (retry with different input, try a different tool, or report the failure).
+
+**Capability request** (subagent → coordinator, mid-execution):
+```json
+{ "type": "request", "capability": "<name>", "action": "<action>", "input": "<value>" }
+```
+
+After writing a request the tool blocks reading stdin. The coordinator dispatches the request to the named `Regular` capability and writes back:
+
+```json
+{ "type": "response", "output": "<value>" }
+{ "type": "response", "error":  "human-readable error string" }
+```
+
+Only `Regular` capabilities are accessible this way — `Core` and `Internal` capabilities are silently rejected with an error response. This lets tools perform privileged operations (e.g. signing a transaction with the wallet) without receiving secrets directly.
 
 ### Tool sandbox (nested bwrap)
 
@@ -176,21 +199,29 @@ Tool name from remote manifest is validated against [a-z0-9][a-z0-9-]* before an
 
 ## Capabilities
 
-Capabilities are system-level features registered at startup. They are not LLM tools — they run inside the agent process and either inject context into the prompt or grant sandbox permissions to tools.
+Capabilities are system-level features registered at startup. They run inside the agent process and serve one or more of three roles: injecting context into the coordinator prompt, acting as callable tools for the coordinator LLM, or being requestable by agentic tools at runtime.
 
-| Class | Visible to | Purpose |
+| Class | Accessible to | Purpose |
 |---|---|---|
-| `Core` | Nobody | Background infrastructure (SystemManager) |
-| `Internal` | Main LLM as callable tool + cycle prompt | Inform the agent about itself; also callable by the LLM as a tool |
-| `Regular` | Tool sandbox layer | Grant sandbox permissions to tools that request them |
+| `Core` | Nobody | Background infrastructure; never exposed to any LLM |
+| `Internal` | Coordinator LLM only | Exposed as callable tools to the coordinator; description injected into the cycle prompt |
+| `Regular` | Coordinator LLM **and** agentic tools | Same as Internal, plus tools can request actions via the capability request protocol at runtime |
+
+The distinction between `Internal` and `Regular` is intentional: some capabilities (e.g. Solana RPC) hold private keys and should only be callable by the trusted coordinator LLM. Others (e.g. wallet signing) are safe to expose to tools under the coordinator's supervision — the coordinator LLM reviews each tool invocation before it runs.
+
+A `Regular` capability may also have no runtime actions (e.g. `network-manager`) — in that case `ToolRequestDescription()` returns empty and no request docs are generated, but the capability still appears in the coordinator prompt and grants sandbox permissions.
+
+Capabilities with an empty `Description()` (e.g. `network-manager`) are excluded from both the coordinator's tool list and the `## Available Tools` prompt section. This prevents infrastructure-only capabilities from confusing the LLM with misleading action suggestions.
 
 ### Implemented capabilities
 
 | Name | Class | Effect |
 |---|---|---|
 | `system-manager` | Core | Owns tool loading, LLM provider logging, cleanup jobs, sandbox extraction |
-| `wallet` | Internal | Derives ed25519 keypair from BIP39 seed; callable by the LLM to retrieve the wallet public address |
-| `network-manager` | Regular | Grants `--share-net` to tool sandboxes that declare it |
+| `wallet` | Regular | Derives ed25519 keypair from BIP39 seed; provides `address` and `sign` actions requestable by tools; coordinator can also call it directly |
+| `network-manager` | Regular | Grants `--share-net` to tool sandboxes that declare it; no runtime request actions |
+| `solana` | Internal | Solana RPC access (balance, transfer, blockhash, send_transaction, account_info); coordinator LLM only — tools use `wallet` to sign, then pass the transaction to the coordinator |
+| `memory` | Internal | Two-layer cross-cycle state: (a) `ConversationWindowBuffer` (last 3 cycles, automatic via langchaingo); (b) structured plan/observation/task store callable by coordinator LLM |
 
 ### Planned capabilities
 
@@ -262,7 +293,6 @@ Stored in `~/.solai/config.json`. Managed via `solai config set/get/list`.
 
 | Feature | Notes |
 |---|---|
-| Permission request system | Tools can output `"type": "request"` — not yet handled by the agent; planned for a future capability |
 | File manager capability | `FSBinds` field exists in `SandboxPolicy`; no capability wires it up yet |
 | Web UI | Planned long-term; listed as an Internal capability |
 | Signal-based IPC | Original design used file directories + signal channel; simplified to direct stdin/stdout. May revisit for long-running tools |
