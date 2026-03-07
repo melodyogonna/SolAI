@@ -103,10 +103,13 @@ func TestNetworkManagerCapability_Class(t *testing.T) {
 	}
 }
 
-func TestNetworkManagerCapability_Description_NonEmpty(t *testing.T) {
+func TestNetworkManagerCapability_Description_Empty(t *testing.T) {
+	// network-manager intentionally has an empty description so it is not
+	// shown to the coordinator LLM as a callable tool. Network access is
+	// granted via sandbox policy, not by direct LLM invocation.
 	n := NewNetworkManagerCapability()
-	if n.Description() == "" {
-		t.Error("expected non-empty description")
+	if n.Description() != "" {
+		t.Errorf("expected empty description, got %q", n.Description())
 	}
 }
 
@@ -126,5 +129,235 @@ func TestNetworkManagerCapability_IsNotCore(t *testing.T) {
 	n := NewNetworkManagerCapability()
 	if n.Class() == Core {
 		t.Error("NetworkManager should not be Core class")
+	}
+}
+
+// ---- MemoryCapability -------------------------------------------------------
+
+func TestMemoryCapability_Metadata(t *testing.T) {
+	m := NewMemoryCapability()
+	if m.Name() != "memory" {
+		t.Errorf("Name: got %q, want memory", m.Name())
+	}
+	if m.Class() != Internal {
+		t.Errorf("Class: got %v, want Internal", m.Class())
+	}
+	if m.ToolRequestDescription() != "" {
+		t.Errorf("ToolRequestDescription: expected empty, got %q", m.ToolRequestDescription())
+	}
+	if m.Description() == "" {
+		t.Error("Description: expected non-empty")
+	}
+}
+
+func TestMemoryCapability_Execute_UpdatePlan(t *testing.T) {
+	m := NewMemoryCapability()
+	out, err := m.Execute(context.Background(), `{"action":"update_plan","plan":"monitor SOL price"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	assertOK(t, out)
+	if m.plan != "monitor SOL price" {
+		t.Errorf("plan not stored: got %q", m.plan)
+	}
+}
+
+func TestMemoryCapability_Execute_UpdatePlan_Replaces(t *testing.T) {
+	m := NewMemoryCapability()
+	m.Execute(context.Background(), `{"action":"update_plan","plan":"old plan"}`)
+	m.Execute(context.Background(), `{"action":"update_plan","plan":"new plan"}`)
+	if m.plan != "new plan" {
+		t.Errorf("expected plan to be replaced: got %q", m.plan)
+	}
+}
+
+func TestMemoryCapability_Execute_AddObservation(t *testing.T) {
+	m := NewMemoryCapability()
+	out, err := m.Execute(context.Background(), `{"action":"add_observation","content":"SOL at $180"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	assertOK(t, out)
+	if len(m.observations) != 1 || m.observations[0] != "SOL at $180" {
+		t.Errorf("observation not stored: %v", m.observations)
+	}
+}
+
+func TestMemoryCapability_Execute_AddObservation_RingEvicts(t *testing.T) {
+	m := NewMemoryCapability()
+	for i := 0; i < maxObservations+3; i++ {
+		m.Execute(context.Background(), `{"action":"add_observation","content":"obs"}`)
+	}
+	if len(m.observations) != maxObservations {
+		t.Errorf("ring should cap at %d, got %d", maxObservations, len(m.observations))
+	}
+}
+
+func TestMemoryCapability_Execute_AddPending(t *testing.T) {
+	m := NewMemoryCapability()
+	out, err := m.Execute(context.Background(), `{"action":"add_pending","task":"buy JUP"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	assertOK(t, out)
+	if len(m.pending) != 1 || m.pending[0] != "buy JUP" {
+		t.Errorf("pending not stored: %v", m.pending)
+	}
+}
+
+func TestMemoryCapability_Execute_CompleteTask(t *testing.T) {
+	m := NewMemoryCapability()
+	m.Execute(context.Background(), `{"action":"add_pending","task":"buy JUP"}`)
+	out, err := m.Execute(context.Background(), `{"action":"complete_task","task":"buy JUP"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	assertOK(t, out)
+	if len(m.pending) != 0 {
+		t.Errorf("pending should be empty after complete_task, got %v", m.pending)
+	}
+	if len(m.completed) != 1 || m.completed[0] != "buy JUP" {
+		t.Errorf("completed not updated: %v", m.completed)
+	}
+}
+
+func TestMemoryCapability_Execute_CompleteTask_RingEvicts(t *testing.T) {
+	m := NewMemoryCapability()
+	for i := 0; i < maxCompleted+3; i++ {
+		m.Execute(context.Background(), `{"action":"complete_task","task":"t"}`)
+	}
+	if len(m.completed) != maxCompleted {
+		t.Errorf("completed ring should cap at %d, got %d", maxCompleted, len(m.completed))
+	}
+}
+
+func TestMemoryCapability_Execute_RemovePending(t *testing.T) {
+	m := NewMemoryCapability()
+	m.Execute(context.Background(), `{"action":"add_pending","task":"task A"}`)
+	m.Execute(context.Background(), `{"action":"add_pending","task":"task B"}`)
+	out, err := m.Execute(context.Background(), `{"action":"remove_pending","task":"task A"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	assertOK(t, out)
+	if len(m.pending) != 1 || m.pending[0] != "task B" {
+		t.Errorf("expected only task B remaining, got %v", m.pending)
+	}
+}
+
+func TestMemoryCapability_Execute_Read(t *testing.T) {
+	m := NewMemoryCapability()
+	m.Execute(context.Background(), `{"action":"update_plan","plan":"the plan"}`)
+	m.Execute(context.Background(), `{"action":"add_observation","content":"obs1"}`)
+	m.Execute(context.Background(), `{"action":"add_pending","task":"do thing"}`)
+
+	out, err := m.Execute(context.Background(), `{"action":"read"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var snap map[string]any
+	if err := json.Unmarshal([]byte(out), &snap); err != nil {
+		t.Fatalf("read result is not valid JSON: %v (got %q)", err, out)
+	}
+	if snap["plan"] != "the plan" {
+		t.Errorf("read plan: got %v", snap["plan"])
+	}
+	obs, ok := snap["observations"].([]any)
+	if !ok || len(obs) != 1 {
+		t.Errorf("read observations: got %v", snap["observations"])
+	}
+	pending, ok := snap["pending"].([]any)
+	if !ok || len(pending) != 1 {
+		t.Errorf("read pending: got %v", snap["pending"])
+	}
+}
+
+func TestMemoryCapability_Execute_InvalidJSON(t *testing.T) {
+	m := NewMemoryCapability()
+	out, err := m.Execute(context.Background(), `not json`)
+	if err != nil {
+		t.Fatalf("Execute should not return Go error: %v", err)
+	}
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error in output for bad JSON, got %q", out)
+	}
+}
+
+func TestMemoryCapability_Execute_UnknownAction(t *testing.T) {
+	m := NewMemoryCapability()
+	out, err := m.Execute(context.Background(), `{"action":"explode"}`)
+	if err != nil {
+		t.Fatalf("Execute should not return Go error: %v", err)
+	}
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error for unknown action, got %q", out)
+	}
+}
+
+func TestMemoryCapability_Execute_MissingRequiredFields(t *testing.T) {
+	m := NewMemoryCapability()
+	cases := []string{
+		`{"action":"add_observation"}`,
+		`{"action":"add_pending"}`,
+		`{"action":"complete_task"}`,
+		`{"action":"remove_pending"}`,
+	}
+	for _, input := range cases {
+		out, err := m.Execute(context.Background(), input)
+		if err != nil {
+			t.Errorf("%s: unexpected Go error: %v", input, err)
+		}
+		if !strings.Contains(out, "error") {
+			t.Errorf("%s: expected error in output, got %q", input, out)
+		}
+	}
+}
+
+func TestMemoryCapability_BuildMemorySection_EmptyWhenFresh(t *testing.T) {
+	m := NewMemoryCapability()
+	if sec := m.BuildMemorySection(); sec != "" {
+		t.Errorf("expected empty section on fresh capability, got %q", sec)
+	}
+}
+
+func TestMemoryCapability_BuildMemorySection_ContainsPlan(t *testing.T) {
+	m := NewMemoryCapability()
+	m.Execute(context.Background(), `{"action":"update_plan","plan":"watch SOL"}`)
+	sec := m.BuildMemorySection()
+	if !strings.Contains(sec, "## Agent Memory") {
+		t.Errorf("section missing header: %q", sec)
+	}
+	if !strings.Contains(sec, "watch SOL") {
+		t.Errorf("section missing plan text: %q", sec)
+	}
+}
+
+func TestMemoryCapability_BuildMemorySection_ContainsAllSubsections(t *testing.T) {
+	m := NewMemoryCapability()
+	m.Execute(context.Background(), `{"action":"update_plan","plan":"p"}`)
+	m.Execute(context.Background(), `{"action":"add_observation","content":"o"}`)
+	m.Execute(context.Background(), `{"action":"add_pending","task":"t"}`)
+	m.Execute(context.Background(), `{"action":"complete_task","task":"done"}`)
+	sec := m.BuildMemorySection()
+	for _, want := range []string{"### Current Plan", "### Recent Observations", "### Pending Tasks", "### Completed Tasks (recent)"} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("section missing subsection %q: %q", want, sec)
+		}
+	}
+}
+
+func TestMemoryCapability_ImplementsMemorySectionProvider(t *testing.T) {
+	var _ MemorySectionProvider = NewMemoryCapability()
+}
+
+// assertOK checks that Execute returned {"ok":true}.
+func assertOK(t *testing.T, out string) {
+	t.Helper()
+	var result map[string]any
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("output is not valid JSON: %v (got %q)", err, out)
+	}
+	if result["ok"] != true {
+		t.Errorf("expected {\"ok\":true}, got %q", out)
 	}
 }

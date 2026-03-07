@@ -25,10 +25,10 @@ func (n *NetworkManagerCapability) Name() string { return "network-manager" }
 // Class implements Capability — Regular, so tools can declare it in their manifest.
 func (n *NetworkManagerCapability) Class() CapabilityClass { return Regular }
 
-// Description implements Capability.
-func (n *NetworkManagerCapability) Description() string {
-	return "Grants outbound network access to tools that declare it"
-}
+// Description implements Capability — empty so it is not shown to the
+// coordinator LLM as a callable tool. Network access is granted at sandbox
+// setup time via required_capabilities; the LLM cannot influence this.
+func (n *NetworkManagerCapability) Description() string { return "" }
 
 // Execute implements Capability. Returns a simple status JSON.
 func (n *NetworkManagerCapability) Execute(_ context.Context, _ string) (string, error) {

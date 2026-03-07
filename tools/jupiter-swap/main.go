@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/joho/godotenv/autoload"
 	"github.com/melodyogonna/solai/ratelimit"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
@@ -90,6 +91,7 @@ Returns: quote with expected output amount, price impact, and route details.`
 }
 
 func (t *jupiterQuoteTool) Call(ctx context.Context, input string) (string, error) {
+	input = stripMarkdownFence(input)
 	var req struct {
 		InputMint   string `json:"inputMint"`
 		OutputMint  string `json:"outputMint"`
@@ -138,6 +140,7 @@ The coordinator will sign and submit this transaction via the Solana capability.
 }
 
 func (t *jupiterSwapTxTool) Call(ctx context.Context, input string) (string, error) {
+	input = stripMarkdownFence(input)
 	if t.walletAddress == "" {
 		return "", fmt.Errorf("wallet address not available — cannot build swap transaction")
 	}
@@ -237,8 +240,18 @@ func main() {
 
 	result, err := chains.Run(ctx, executor, prompt)
 	if err != nil {
-		writeErrorEnc(enc, fmt.Sprintf("agent run failed: %v", err))
-		return
+		const parsePrefix = "unable to parse agent output: "
+		if i := strings.Index(err.Error(), parsePrefix); i >= 0 {
+			extracted := err.Error()[i+len(parsePrefix):]
+			if strings.HasPrefix(extracted, "Thought:") {
+				writeErrorEnc(enc, fmt.Sprintf("agent run failed: %v", err))
+				return
+			}
+			result = extracted
+		} else {
+			writeErrorEnc(enc, fmt.Sprintf("agent run failed: %v", err))
+			return
+		}
 	}
 
 	out, _ := json.Marshal(result)
@@ -286,6 +299,19 @@ func doRequest(req *http.Request) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, b)
 	}
 	return b, nil
+}
+
+func stripMarkdownFence(s string) string {
+	s = strings.TrimSpace(s)
+	for _, fence := range []string{"```json", "```"} {
+		if strings.HasPrefix(s, fence) {
+			s = strings.TrimPrefix(s, fence)
+			s = strings.TrimSuffix(strings.TrimSpace(s), "```")
+			s = strings.TrimSpace(s)
+			break
+		}
+	}
+	return s
 }
 
 func writeErrorEnc(enc *json.Encoder, msg string) {

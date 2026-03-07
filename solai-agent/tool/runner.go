@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -101,9 +103,25 @@ type SandboxPolicy struct {
 	FSBinds []FSBind
 }
 
+// systemLibDirs lists host paths that dynamically-linked tool binaries need
+// inside the sandbox. Each present path is bind-mounted read-only.
+var systemLibDirs = []string{
+	"/lib",
+	"/lib64",
+	"/usr/lib",
+	"/usr/lib64",
+	"/etc/ld.so.cache",
+	"/etc/ld.so.conf",
+	"/etc/ld.so.conf.d",
+}
+
 // buildBwrapArgs constructs the bwrap argument list for the given policy.
 func buildBwrapArgs(policy SandboxPolicy, toolDir, executable string) []string {
-	exec := filepath.Base(executable)
+	// Clean the executable path to resolve "./" prefixes while preserving any
+	// subdirectory structure (e.g. "./bin/token-price" → "bin/token-price").
+	// The tool directory is bind-mounted at /app, so the in-sandbox path is
+	// /app/<cleaned-relative-path>.
+	rel := filepath.Clean(executable)
 
 	args := []string{
 		"--unshare-all",
@@ -112,6 +130,14 @@ func buildBwrapArgs(policy SandboxPolicy, toolDir, executable string) []string {
 		"--proc", "/proc",
 		"--dev", "/dev",
 		"--die-with-parent",
+	}
+
+	// Bind system library directories so dynamically-linked tool binaries
+	// can find their ELF interpreter and shared libraries.
+	for _, p := range systemLibDirs {
+		if _, err := os.Stat(p); err == nil {
+			args = append(args, "--ro-bind", p, p)
+		}
 	}
 
 	if policy.ShareNet {
@@ -126,7 +152,7 @@ func buildBwrapArgs(policy SandboxPolicy, toolDir, executable string) []string {
 		}
 	}
 
-	args = append(args, "--", "/app/"+exec)
+	args = append(args, "--", "/app/"+rel)
 	return args
 }
 
@@ -151,12 +177,17 @@ func RunTool(ctx context.Context, dir, executable string, input ToolInput, timeo
 	var cmd *exec.Cmd
 	if policy.BwrapPath != "" {
 		bwrapArgs := buildBwrapArgs(policy, dir, executable)
+		slog.Debug("running tool in sandbox", "bwrap", policy.BwrapPath, "args", strings.Join(bwrapArgs, " "))
 		cmd = exec.CommandContext(ctx, policy.BwrapPath, bwrapArgs...)
 		if len(extraEnv) > 0 {
 			cmd.Env = extraEnv
 		}
 	} else {
-		cmd = exec.CommandContext(ctx, executable)
+		// Resolve to an absolute path so exec finds the binary regardless of
+		// the agent's current working directory (cmd.Dir only affects the child
+		// process's working directory, not the path lookup for the executable).
+		absExec := filepath.Join(dir, executable)
+		cmd = exec.CommandContext(ctx, absExec)
 		cmd.Dir = dir
 		if len(extraEnv) > 0 {
 			cmd.Env = append(os.Environ(), extraEnv...)

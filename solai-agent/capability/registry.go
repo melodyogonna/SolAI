@@ -85,12 +85,14 @@ func (t capabilityTool) Call(ctx context.Context, input string) (string, error) 
 	return t.c.Execute(ctx, input)
 }
 
-// GetAgentTools returns all Internal and Regular capabilities wrapped as
+// GetAgentTools returns Internal and Regular capabilities wrapped as
 // langchaingo tools so the coordinator's ReAct agent can call them directly.
+// Capabilities with an empty Description are excluded — they are infrastructure
+// concerns (e.g. network-manager) that the LLM does not need to invoke.
 func (m *CapabilityManager) GetAgentTools() []lctools.Tool {
 	var tools []lctools.Tool
 	for _, c := range m.capabilities {
-		if c.Class() == Internal || c.Class() == Regular {
+		if (c.Class() == Internal || c.Class() == Regular) && c.Description() != "" {
 			tools = append(tools, capabilityTool{c})
 		}
 	}
@@ -109,11 +111,12 @@ func (m *CapabilityManager) GetByName(name string) Capability {
 
 // BuildCapabilityPromptSection generates a Markdown block describing all
 // Internal and Regular capabilities for injection into the coordinator's
-// per-cycle prompt. Returns an empty string if none exist.
+// per-cycle prompt. Capabilities with an empty Description are omitted.
+// Returns an empty string if none remain.
 func (m *CapabilityManager) BuildCapabilityPromptSection() string {
 	var visible []Capability
 	for _, c := range m.capabilities {
-		if c.Class() == Internal || c.Class() == Regular {
+		if (c.Class() == Internal || c.Class() == Regular) && c.Description() != "" {
 			visible = append(visible, c)
 		}
 	}

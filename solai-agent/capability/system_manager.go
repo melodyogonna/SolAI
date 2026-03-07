@@ -87,7 +87,7 @@ func (m *SystemManager) Execute(_ context.Context, _ string) (string, error) {
 
 // Setup prepares the agent's operational environment:
 //  1. Logs configured LLM providers.
-//  2. Extracts the embedded bwrap sandbox binary.
+//  2. Extracts the embedded bwrap sandbox binary (unless SANDBOX=disabled).
 //  3. Loads tools via the injected loader, passing the bwrap path and capManager.
 //
 // capManager is passed to the tool loader for capability validation and runtime
@@ -95,9 +95,10 @@ func (m *SystemManager) Execute(_ context.Context, _ string) (string, error) {
 //
 // Returns (warnings, fatal_error). Must be called before GetTools.
 //
-// If the SANDBOX environment variable is set to "required", Setup returns a
-// fatal error when the bwrap binary cannot be extracted. Otherwise the agent
-// falls back to running tools unsandboxed with a warning.
+// Sandbox behaviour is controlled by the SANDBOX environment variable:
+//   - unset / any other value: extract bwrap; fall back to unsandboxed on error
+//   - "required": fatal error if bwrap cannot be extracted
+//   - "disabled": skip extraction entirely; all tools run unsandboxed
 func (m *SystemManager) Setup(capManager *CapabilityManager) ([]error, error) {
 	if providers := m.provider.ConfiguredProviders(); len(providers) > 0 {
 		slog.Info("LLM providers configured", "providers", providers)
@@ -105,19 +106,19 @@ func (m *SystemManager) Setup(capManager *CapabilityManager) ([]error, error) {
 		slog.Warn("no LLM providers configured — tools requiring an LLM will be disabled")
 	}
 
-	bwrapPath, err := sandbox.Extract()
-	if err != nil {
-		if os.Getenv("SANDBOX") == "required" {
-			return nil, fmt.Errorf("sandbox extraction failed (SANDBOX=required): %w", err)
-		}
-		slog.Warn("sandbox not available; tools will run unsandboxed", "err", err)
+	if os.Getenv("SANDBOX") == "disabled" {
+		slog.Info("sandboxing disabled (SANDBOX=disabled); tools will run unsandboxed")
 	} else {
-		m.bwrapPath = bwrapPath
-		slog.Info("sandbox binary extracted", "path", bwrapPath, "version", sandbox.BwrapVersion)
-		// Clean up the temp binary when the agent exits via a registered job
-		// that fires once on first tick. A more direct approach is to register
-		// the cleanup with the context; we do it here via a one-shot job so
-		// the temp file is removed when Start(ctx) returns.
+		bwrapPath, err := sandbox.Extract()
+		if err != nil {
+			if os.Getenv("SANDBOX") == "required" {
+				return nil, fmt.Errorf("sandbox extraction failed (SANDBOX=required): %w", err)
+			}
+			slog.Warn("sandbox not available; tools will run unsandboxed", "err", err)
+		} else {
+			m.bwrapPath = bwrapPath
+			slog.Info("sandbox binary extracted", "path", bwrapPath, "version", sandbox.BwrapVersion)
+		}
 	}
 
 	tools, warnings, err := m.loader(m.bwrapPath, capManager)
@@ -158,6 +159,11 @@ func (m *SystemManager) Start(ctx context.Context) {
 			m.runJob(ctx, j)
 		}(job)
 	}
+
+	// Always wait for ctx cancellation before cleanup. Without this, Start
+	// returns immediately when no jobs are registered and removes the bwrap
+	// temp file before any tool has had a chance to use it.
+	<-ctx.Done()
 	wg.Wait()
 
 	// Remove the extracted bwrap temp file on shutdown.

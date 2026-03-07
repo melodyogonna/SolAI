@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/melodyogonna/solai/ratelimit"
 	"github.com/melodyogonna/solai/solai-agent/capability"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
+	"github.com/tmc/langchaingo/memory"
+	"github.com/tmc/langchaingo/schema"
 	lctools "github.com/tmc/langchaingo/tools"
 )
 
@@ -44,7 +47,7 @@ func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManag
 		}
 	}
 
-	cyclePrompt := buildCyclePrompt(cfg, capManager)
+	windowMem := memory.NewConversationWindowBuffer(3)
 
 	for {
 		select {
@@ -56,7 +59,8 @@ func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManag
 
 		slog.Info("starting agent cycle")
 		cycleCtx, cancel := context.WithTimeout(ctx, cfg.CycleTimeout)
-		answer, err := runCycle(cycleCtx, cfg, agentTools, cyclePrompt)
+		cyclePrompt := buildCyclePrompt(cfg, capManager, cfg.SystemManager.GetTools())
+		answer, err := runCycle(cycleCtx, cfg, agentTools, cyclePrompt, windowMem)
 		cancel()
 
 		if err != nil {
@@ -68,9 +72,9 @@ func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManag
 }
 
 // runCycle executes one complete ReAct cycle with exponential retry on transient errors.
-// It creates a fresh agent and executor each attempt to avoid state bleed.
+// It creates a fresh agent each attempt but shares the window memory across retries and cycles.
 // Non-transient errors (ErrNotFinished, context cancellation/timeout) are not retried.
-func runCycle(ctx context.Context, cfg Config, agentTools []lctools.Tool, prompt string) (string, error) {
+func runCycle(ctx context.Context, cfg Config, agentTools []lctools.Tool, prompt string, mem schema.Memory) (string, error) {
 	var answer string
 	err := cycleRetry.Execute(ctx, func(ctx context.Context) error {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
@@ -82,7 +86,7 @@ func runCycle(ctx context.Context, cfg Config, agentTools []lctools.Tool, prompt
 			agents.WithMaxIterations(10),
 			agents.WithPromptPrefix(cfg.SystemPrompt),
 		)
-		executor := agents.NewExecutor(a)
+		executor := agents.NewExecutor(a, agents.WithMemory(mem))
 		var err error
 		answer, err = chains.Run(ctx, executor, prompt)
 		if errors.Is(err, agents.ErrNotFinished) {
@@ -104,14 +108,35 @@ type noRetryError struct{ err error }
 func (e *noRetryError) Error() string { return e.err.Error() }
 
 // buildCyclePrompt assembles the input string passed to chains.Run each cycle.
-// It combines the capability section (e.g. wallet address) with the user's goals.
+// It lists ALL available tools (capabilities + agentic tools) so the agent has
+// a complete, consistent view before seeing the langchaingo ReAct tool list.
+// It also injects any MemorySectionProvider sections (e.g. MemoryCapability).
 // This is the "Question" the ReAct agent receives; the system prompt is the "Prefix".
-func buildCyclePrompt(cfg Config, capManager *capability.CapabilityManager) string {
-	capSection := capManager.BuildCapabilityPromptSection()
-	if capSection != "" {
-		return fmt.Sprintf("## System Capabilities\n%s\n\n## Your Goals\n%s", capSection, cfg.UserGoals)
+func buildCyclePrompt(cfg Config, capManager *capability.CapabilityManager, agenticTools []lctools.Tool) string {
+	var toolLines []string
+
+	if capSection := capManager.BuildCapabilityPromptSection(); capSection != "" {
+		toolLines = append(toolLines, capSection)
 	}
-	return fmt.Sprintf("## Your Goals\n%s", cfg.UserGoals)
+	for _, t := range agenticTools {
+		toolLines = append(toolLines, fmt.Sprintf("- **%s**: %s", t.Name(), t.Description()))
+	}
+
+	var sections []string
+	if len(toolLines) > 0 {
+		sections = append(sections, "## Available Tools\n"+strings.Join(toolLines, "\n"))
+	}
+
+	for _, c := range capManager.GetAll() {
+		if mp, ok := c.(capability.MemorySectionProvider); ok {
+			if sec := mp.BuildMemorySection(); sec != "" {
+				sections = append(sections, sec)
+			}
+		}
+	}
+
+	sections = append(sections, "## Your Goals\n"+cfg.UserGoals)
+	return strings.Join(sections, "\n\n")
 }
 
 // handleCycleError logs cycle errors with appropriate severity.

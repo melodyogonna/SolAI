@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/joho/godotenv/autoload"
 	"github.com/melodyogonna/solai/ratelimit"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
@@ -65,7 +66,8 @@ Returns JSON with price_usd and change_24h_pct. Best for accurate prices of well
 }
 
 func (t *jupiterTool) Call(ctx context.Context, input string) (string, error) {
-	mints := resolveToMints(strings.Split(input, ","))
+	input = stripMarkdownFence(input)
+	mints := resolveToMints(parseTokenList(input))
 	if len(mints) == 0 {
 		return "", fmt.Errorf("no recognised token symbols or mint addresses in: %q", input)
 	}
@@ -97,7 +99,17 @@ Best for discovering tokens, finding new/unknown tokens, or market discovery.`
 }
 
 func (t *dexSearchTool) Call(ctx context.Context, input string) (string, error) {
-	input = strings.TrimSpace(input)
+	input = strings.TrimSpace(stripMarkdownFence(input))
+	// If LLM passed JSON like {"query":"..."} or {"q":"..."}, extract the value.
+	var obj map[string]string
+	if json.Unmarshal([]byte(input), &obj) == nil {
+		for _, k := range []string{"query", "q", "input", "search"} {
+			if v, ok := obj[k]; ok {
+				input = v
+				break
+			}
+		}
+	}
 	if input == "" {
 		return "", fmt.Errorf("search query is required")
 	}
@@ -129,7 +141,7 @@ Best when you already have a mint address and need pool-level market detail.`
 }
 
 func (t *dexTokenTool) Call(ctx context.Context, input string) (string, error) {
-	parts := strings.Split(input, ",")
+	parts := parseTokenList(stripMarkdownFence(input))
 	var addresses []string
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
@@ -190,8 +202,21 @@ func main() {
 
 	result, err := chains.Run(ctx, executor, prompt)
 	if err != nil {
-		writeError(fmt.Sprintf("agent run failed: %v", err))
-		return
+		// langchaingo's OneShotAgent wraps the raw LLM output in a parse error
+		// when the model responds without the expected ReAct format. Recover by
+		// extracting the actual output so the coordinator still gets a result.
+		const parsePrefix = "unable to parse agent output: "
+		if i := strings.Index(err.Error(), parsePrefix); i >= 0 {
+			extracted := err.Error()[i+len(parsePrefix):]
+			if strings.HasPrefix(extracted, "Thought:") {
+				writeError(fmt.Sprintf("agent run failed: %v", err))
+				return
+			}
+			result = extracted
+		} else {
+			writeError(fmt.Sprintf("agent run failed: %v", err))
+			return
+		}
 	}
 
 	out, _ := json.Marshal(result)
@@ -332,6 +357,46 @@ func filterAndSummarise(pairs []dexPair, n int) []DexPairSummary {
 		}
 	}
 	return summaries
+}
+
+// stripMarkdownFence removes ```json ... ``` or ``` ... ``` wrappers that the
+// LLM sometimes wraps tool inputs in.
+func stripMarkdownFence(s string) string {
+	s = strings.TrimSpace(s)
+	for _, fence := range []string{"```json", "```"} {
+		if strings.HasPrefix(s, fence) {
+			s = strings.TrimPrefix(s, fence)
+			s = strings.TrimSuffix(strings.TrimSpace(s), "```")
+			s = strings.TrimSpace(s)
+			break
+		}
+	}
+	return s
+}
+
+// parseTokenList accepts either a comma-separated string or a JSON object/array
+// with token symbols or mint addresses and returns a flat slice of strings.
+func parseTokenList(input string) []string {
+	input = strings.TrimSpace(input)
+	// Try JSON array: ["SOL","USDC",...]
+	var arr []string
+	if json.Unmarshal([]byte(input), &arr) == nil {
+		return arr
+	}
+	// Try JSON object: {"mints":[...]} / {"tokens":[...]} / {"ids":[...]}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(input), &obj) == nil {
+		for _, k := range []string{"mints", "tokens", "ids", "symbols", "addresses"} {
+			if raw, ok := obj[k]; ok {
+				var list []string
+				if json.Unmarshal(raw, &list) == nil {
+					return list
+				}
+			}
+		}
+	}
+	// Fall back to comma-separated.
+	return strings.Split(input, ",")
 }
 
 func writeSuccess(data json.RawMessage) {

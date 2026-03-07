@@ -81,7 +81,10 @@ func agentRun(ctx context.Context, cfg *solaiconfig.SolaiConfig, toolsDir string
 	capability.Register("network-manager", func() capability.Capability {
 		return capability.NewNetworkManagerCapability()
 	})
-	capManager := capability.SetUp([]string{"wallet", "solana", "network-manager"})
+	capability.Register("memory", func() capability.Capability {
+		return capability.NewMemoryCapability()
+	})
+	capManager := capability.SetUp([]string{"wallet", "solana", "network-manager", "memory"})
 
 	slog.Info("SolAI agent starting",
 		"provider", cfg.Model.Provider,

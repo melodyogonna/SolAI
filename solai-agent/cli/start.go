@@ -51,6 +51,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	noSandbox, _ := cmd.Flags().GetBool("no-sandbox")
 	if noSandbox {
+		os.Setenv("SANDBOX", "disabled")
 		return agentRun(cmd.Context(), cfg, solaiconfig.ToolsDir())
 	}
 

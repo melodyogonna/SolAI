@@ -3,6 +3,7 @@ module github.com/melodyogonna/solai/tools/token-price
 go 1.25.0
 
 require (
+	github.com/joho/godotenv v1.5.1
 	github.com/melodyogonna/solai/ratelimit v0.0.0-20260306215652-f12013591d3c
 	github.com/tmc/langchaingo v0.1.14
 )

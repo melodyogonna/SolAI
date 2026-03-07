@@ -11,12 +11,38 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/joho/godotenv/autoload"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
 	lctools "github.com/tmc/langchaingo/tools"
 )
 
 const raydiumPoolsBase = "https://api-v3.raydium.io/pools/info"
+
+// knownMints maps common token symbols to their Solana mint addresses.
+var knownMints = map[string]string{
+	"SOL":  "So11111111111111111111111111111111111111112",
+	"USDC": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+	"USDT": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+	"RAY":  "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+	"JUP":  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+	"BONK": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+	"WIF":  "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+	"ORCA": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
+	"PYTH": "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+}
+
+// resolveMint returns a mint address for the given input (symbol or raw address).
+func resolveMint(input string) (string, bool) {
+	if mint, ok := knownMints[strings.ToUpper(strings.TrimSpace(input))]; ok {
+		return mint, true
+	}
+	// Looks like a base58 mint address
+	if l := len(strings.TrimSpace(input)); l >= 32 && l <= 44 {
+		return strings.TrimSpace(input), true
+	}
+	return "", false
+}
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
 
@@ -27,20 +53,20 @@ type topPoolsTool struct{}
 func (t *topPoolsTool) Name() string { return "raydium-top-pools" }
 
 func (t *topPoolsTool) Description() string {
-	return `Fetch the top Raydium liquidity pools sorted by TVL.
-Input: optional token symbol or mint address to filter results (e.g. "SOL", "USDC", or empty for top pools overall).
+	return `Fetch the top Raydium liquidity pools sorted by 24h volume.
+Input: optional token symbol (SOL, USDC, USDT, RAY, JUP, BONK, WIF, ORCA, PYTH) or mint address to filter results; leave empty for top pools overall.
 Returns: list of pools with TVL, 24h volume, APR (fee + reward), and farming status.`
 }
 
 func (t *topPoolsTool) Call(ctx context.Context, input string) (string, error) {
-	input = strings.TrimSpace(input)
+	input = strings.TrimSpace(stripMarkdownFence(input))
 
 	var apiURL string
-	if input != "" {
-		apiURL = raydiumPoolsBase + "/search?q=" + url.QueryEscape(input) +
-			"&poolType=all&poolSortField=tvl&sortType=desc&pageSize=15&page=1"
+	if mint, ok := resolveMint(input); ok {
+		apiURL = raydiumPoolsBase + "/mint?mint1=" + url.QueryEscape(mint) +
+			"&poolType=all&poolSortField=default&sortType=desc&pageSize=15&page=1"
 	} else {
-		apiURL = raydiumPoolsBase + "/list?poolType=all&poolSortField=tvl&sortType=desc&pageSize=15&page=1"
+		apiURL = raydiumPoolsBase + "/list?poolType=all&poolSortField=volume24h&sortType=desc&pageSize=15&page=1"
 	}
 
 	pools, err := fetchPools(ctx, apiURL)
@@ -60,19 +86,24 @@ type searchPoolsTool struct{}
 func (t *searchPoolsTool) Name() string { return "raydium-search" }
 
 func (t *searchPoolsTool) Description() string {
-	return `Search Raydium for pools matching a specific token pair, symbol, or mint address.
-Input: search query (e.g. "SOL-USDC", "RAY", "4k3Dyjz...").
+	return `Search Raydium for pools containing a specific token.
+Input: a known token symbol (SOL, USDC, USDT, RAY, JUP, BONK, WIF, ORCA, PYTH) or a raw mint address.
 Returns: matching pools with TVL, APR, volume, and farm details.`
 }
 
 func (t *searchPoolsTool) Call(ctx context.Context, input string) (string, error) {
-	input = strings.TrimSpace(input)
+	input = strings.TrimSpace(stripMarkdownFence(input))
 	if input == "" {
 		return "", fmt.Errorf("search query is required")
 	}
 
-	apiURL := raydiumPoolsBase + "/search?q=" + url.QueryEscape(input) +
-		"&poolType=all&poolSortField=tvl&sortType=desc&pageSize=10&page=1"
+	mint, ok := resolveMint(input)
+	if !ok {
+		return "", fmt.Errorf("unrecognised token %q: provide a known symbol (%s) or a mint address",
+			input, "SOL, USDC, USDT, RAY, JUP, BONK, WIF, ORCA, PYTH")
+	}
+	apiURL := raydiumPoolsBase + "/mint?mint1=" + url.QueryEscape(mint) +
+		"&poolType=all&poolSortField=default&sortType=desc&pageSize=10&page=1"
 
 	pools, err := fetchPools(ctx, apiURL)
 	if err != nil {
@@ -116,8 +147,20 @@ func main() {
 
 	result, err := chains.Run(ctx, executor, prompt)
 	if err != nil {
-		writeError(fmt.Sprintf("agent run failed: %v", err))
-		return
+		const parsePrefix = "unable to parse agent output: "
+		if i := strings.Index(err.Error(), parsePrefix); i >= 0 {
+			extracted := err.Error()[i+len(parsePrefix):]
+			// If the extracted text is a raw ReAct trace the agent loop never
+			// completed — don't return it as a result.
+			if strings.HasPrefix(extracted, "Thought:") {
+				writeError(fmt.Sprintf("agent run failed: %v", err))
+				return
+			}
+			result = extracted
+		} else {
+			writeError(fmt.Sprintf("agent run failed: %v", err))
+			return
+		}
 	}
 
 	out, _ := json.Marshal(result)
@@ -190,6 +233,19 @@ func symbolOrShort(m TokenMint) string {
 		return m.Address[:8] + "…"
 	}
 	return m.Address
+}
+
+func stripMarkdownFence(s string) string {
+	s = strings.TrimSpace(s)
+	for _, fence := range []string{"```json", "```"} {
+		if strings.HasPrefix(s, fence) {
+			s = strings.TrimPrefix(s, fence)
+			s = strings.TrimSuffix(strings.TrimSpace(s), "```")
+			s = strings.TrimSpace(s)
+			break
+		}
+	}
+	return s
 }
 
 func writeSuccess(data json.RawMessage) {

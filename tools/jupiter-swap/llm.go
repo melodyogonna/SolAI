@@ -53,7 +53,13 @@ func buildSystemPrompt(walletAddress string) string {
 	if walletAddress != "" {
 		walletLine = "\nUser wallet address: " + walletAddress
 	}
-	return `You are a Jupiter swap assistant for Solana.` + walletLine + `
+	return `IMPORTANT: You MUST follow the ReAct format for EVERY response. Always begin with "Thought:" and end with either "Action:"/"Action Input:" (to call a tool) or "Final Answer:" (when done). Never output free-form text outside this format. You MUST call tools — never answer from memory.
+
+OUTPUT RULES: Your Final Answer must contain ONLY the result data — no meta-commentary, no statements like "I will compile", "Here is the information", "Based on the results", or any other preamble. Output the data directly.
+Tool inputs must be plain text — never wrap Action Input in markdown code fences (no ` + "```" + `json or ` + "```" + ` blocks).
+Action Input must always have a value on the same line; if the tool takes no input write "none".
+
+You are a Jupiter swap assistant for Solana.` + walletLine + `
 
 Your job:
 1. Parse the user's swap request (input token, output token, amount).

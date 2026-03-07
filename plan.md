@@ -10,7 +10,7 @@ An autonomous AI agent that interacts with the Solana blockchain. Built in Go us
 
 - **Hierarchical multi-agent system.** SolAI is a coordinator agent that delegates to subagents. Each agentic tool is itself an LLM agent — it receives a prompt from the main agent, reasons about it using its own LLM, calls the specific capability it wraps (an API, an RPC endpoint, a smart contract), and returns a structured result.
 - **The coordinator plans; subagents execute.** The main agent never calls external APIs or executes transactions directly. It decomposes goals into prompts and dispatches them to the appropriate subagent tools.
-- **Fresh state per cycle.** A new coordinator agent instance is created each cycle. No LLM state bleeds between cycles. Persistent state lives in tools and on-chain.
+- **Two-layer memory across cycles.** A new coordinator agent instance is created each cycle, but state is carried forward via two mechanisms: (1) a shared `ConversationWindowBuffer` passed to each executor — `chains.Call` automatically saves and loads the last 3 cycles' conversation; (2) an explicit `memory` capability tool the LLM calls to persist structured state (current plan, observations, pending tasks). Together they allow multi-cycle strategies without unbounded context growth.
 - **Sandboxed by default.** Both the coordinator and each subagent tool run in isolated bubblewrap (bwrap) sandboxes. Capabilities explicitly widen what is allowed.
 - **Tools as plugins.** Agentic tools are packaged and distributed as GitHub releases, installable via `solai install`. No code changes to the agent are required to add a tool.
 
@@ -51,8 +51,10 @@ SystemManager.Setup()
   └─ Discover tools from /tools/ — load manifests, validate capabilities
   └─ Log configured LLM providers
 
-buildCyclePrompt()
-  └─ Append capability context (e.g. wallet public key) to user goals
+buildCyclePrompt()   [rebuilt every cycle]
+  └─ ## Available Tools — capabilities with non-empty Description + agentic tools
+  └─ ## Agent Memory — injected from MemoryCapability.BuildMemorySection() if non-empty
+  └─ ## Your Goals — user goals from config
 
 runCycle()  [OneShotAgent, max 10 iterations, exponential retry up to 3×]
   └─ ReAct: Reason → pick subagent → formulate prompt → Act → Observe result → repeat
@@ -209,6 +211,8 @@ The distinction between `Internal` and `Regular` is intentional: some capabiliti
 
 A `Regular` capability may also have no runtime actions (e.g. `network-manager`) — in that case `ToolRequestDescription()` returns empty and no request docs are generated, but the capability still appears in the coordinator prompt and grants sandbox permissions.
 
+Capabilities with an empty `Description()` (e.g. `network-manager`) are excluded from both the coordinator's tool list and the `## Available Tools` prompt section. This prevents infrastructure-only capabilities from confusing the LLM with misleading action suggestions.
+
 ### Implemented capabilities
 
 | Name | Class | Effect |
@@ -217,6 +221,7 @@ A `Regular` capability may also have no runtime actions (e.g. `network-manager`)
 | `wallet` | Regular | Derives ed25519 keypair from BIP39 seed; provides `address` and `sign` actions requestable by tools; coordinator can also call it directly |
 | `network-manager` | Regular | Grants `--share-net` to tool sandboxes that declare it; no runtime request actions |
 | `solana` | Internal | Solana RPC access (balance, transfer, blockhash, send_transaction, account_info); coordinator LLM only — tools use `wallet` to sign, then pass the transaction to the coordinator |
+| `memory` | Internal | Two-layer cross-cycle state: (a) `ConversationWindowBuffer` (last 3 cycles, automatic via langchaingo); (b) structured plan/observation/task store callable by coordinator LLM |
 
 ### Planned capabilities
 

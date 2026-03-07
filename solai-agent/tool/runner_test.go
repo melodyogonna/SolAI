@@ -98,10 +98,11 @@ func TestBuildBwrapArgs_MinimalPolicy(t *testing.T) {
 		}
 	}
 
-	// Last argument should be the executable inside /app.
+	// Last argument should be the executable inside /app, preserving any
+	// subdirectory structure from the manifest's executable field.
 	last := args[len(args)-1]
-	if last != "/app/my-tool" {
-		t.Errorf("last arg: got %q, want /app/my-tool", last)
+	if last != "/app/bin/my-tool" {
+		t.Errorf("last arg: got %q, want /app/bin/my-tool", last)
 	}
 }
 
@@ -156,11 +157,13 @@ func TestBuildBwrapArgs_FSBinds(t *testing.T) {
 	}
 }
 
-func TestBuildBwrapArgs_ExecutableStripsLeadingDotSlash(t *testing.T) {
+func TestBuildBwrapArgs_ExecutablePreservesSubdir(t *testing.T) {
+	// "./bin/token-price" must map to "/app/bin/token-price" inside the sandbox,
+	// not "/app/token-price" — the bin/ subdirectory must be preserved.
 	policy := SandboxPolicy{}
 	args := buildBwrapArgs(policy, "/tools/my-tool", "./bin/token-price")
 	last := args[len(args)-1]
-	if last != "/app/token-price" {
-		t.Errorf("last arg: got %q, want /app/token-price", last)
+	if last != "/app/bin/token-price" {
+		t.Errorf("last arg: got %q, want /app/bin/token-price", last)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/melodyogonna/solai/solai-agent/capability"
@@ -67,6 +68,7 @@ func (t *AgenticTool) Call(ctx context.Context, input string) (string, error) {
 
 	output, err := RunTool(ctx, t.dir, t.manifest.Executable, taskInput, t.timeout, extraEnv, t.sandboxPolicy, handler)
 	if err != nil {
+		slog.Error("tool infrastructure error", "tool", t.manifest.Name, "err", err)
 		msg := fmt.Sprintf("Tool infrastructure error: %v", err)
 		return msg, err
 	}
