@@ -31,6 +31,8 @@ Prerequisites:
 
 func init() {
 	startCmd.Flags().Bool("no-sandbox", false, "Run without bwrap sandbox (debug mode)")
+	// Mirror the flag on the root command so "solai --no-sandbox" works too.
+	rootCmd.Flags().Bool("no-sandbox", false, "Run without bwrap sandbox (debug mode)")
 	rootCmd.AddCommand(startCmd)
 }
 
