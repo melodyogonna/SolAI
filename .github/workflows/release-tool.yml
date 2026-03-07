@@ -73,18 +73,26 @@ jobs:
             python3 - <<PYEOF
           import json
 
-          index_path = 'registry/index.json'
-          tool    = '${tool}'
-          version = '${version}'
-          base_url = '${base_url}'
+          index_path   = 'registry/index.json'
+          manifest_path = f'tools/${tool}/manifest.json'
+          tool         = '${tool}'
+          version      = '${version}'
+          base_url     = '${base_url}'
+          repo         = '${GITHUB_REPOSITORY}'
 
           with open(index_path) as f:
               index = json.load(f)
 
-          if tool not in index['tools']:
-              raise SystemExit(f"Tool '{tool}' not in registry/index.json — add an entry before releasing")
+          with open(manifest_path) as f:
+              manifest = json.load(f)
 
-          entry = index['tools'][tool]
+          # Auto-create or backfill empty entries from the manifest.
+          entry = index['tools'].setdefault(tool, {})
+          if not entry.get('description'):
+              entry['description'] = manifest.get('description', '')
+          if not entry.get('maintainer'):
+              entry['maintainer'] = repo
+
           entry['latest'] = version
           entry.setdefault('versions', {})[version] = {
               'manifest':  f'{base_url}/manifest.json',
