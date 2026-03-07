@@ -1,7 +1,7 @@
 {
   "name": "raydium",
   "description": "Fetches Raydium DEX data: liquidity pools, farming opportunities, APY, TVL, and trading volumes for Solana token pairs. Use this to discover yield opportunities, analyse pool liquidity, or compare farming rewards across Raydium pools.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "executable": "./bin/raydium",
   "required_capabilities": ["network-manager"],
   "timeout": "90s",
