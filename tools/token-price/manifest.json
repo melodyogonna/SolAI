@@ -1,7 +1,7 @@
 {
   "name": "token-price",
   "description": "Fetches Solana token prices and market data. Supports price lookup for known tokens (SOL, USDC, JUP, etc.) via Jupiter, plus market discovery, trend analysis, and unknown token search via DexScreener.",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "executable": "./bin/token-price",
   "required_capabilities": ["network-manager"],
   "env": [

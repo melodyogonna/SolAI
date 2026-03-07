@@ -1,7 +1,7 @@
 {
   "name": "jupiter-swap",
   "description": "Quotes and builds Solana token swap transactions using the Jupiter aggregator. Requests the user's wallet address from the coordinator, fetches the best route and quote, then returns both the quote details and a serialized transaction for the coordinator to sign and submit via the Solana capability.",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "executable": "./bin/jupiter-swap",
   "required_capabilities": ["network-manager"],
   "env": [
