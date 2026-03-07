@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -18,10 +19,13 @@ type output struct {
 	NetworkReachable bool `json:"network_reachable"`
 }
 
+type toolOutput struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+}
+
 func main() {
-	// Consume stdin so the runner doesn't get a broken pipe.
-	var input map[string]any
-	json.NewDecoder(os.Stdin).Decode(&input) //nolint:errcheck
+	ipcDir := os.Getenv("SOLAI_IPC_DIR")
 
 	result := output{}
 
@@ -39,8 +43,6 @@ func main() {
 	}
 
 	out, _ := json.Marshal(result)
-	json.NewEncoder(os.Stdout).Encode(map[string]any{ //nolint:errcheck
-		"type":   "success",
-		"output": json.RawMessage(out),
-	})
+	data, _ := json.Marshal(toolOutput{Type: "success", Payload: json.RawMessage(out)})
+	os.WriteFile(filepath.Join(ipcDir, "output.json"), data, 0600) //nolint:errcheck
 }

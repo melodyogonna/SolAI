@@ -22,14 +22,18 @@ type AgenticTool struct {
 	llmCfg        *capability.LLMConfig
 	sandboxPolicy SandboxPolicy
 	toolEnv       []string
-	// capManager provides capability dispatch for runtime requests from the tool.
-	capManager *capability.CapabilityManager
+	// commCap manages per-invocation IPC directories.
+	commCap *capability.CommunicationCapability
+	// walletAddress is pre-resolved at construction and injected into every
+	// tool invocation via ToolInput.Capabilities["wallet_address"].
+	walletAddress string
 }
 
 // NewAgenticTool constructs an AgenticTool from a manifest, its directory,
-// an optional LLM config, sandbox policy, resolved env vars, and the
-// capability manager used to dispatch capability requests at runtime.
-func NewAgenticTool(manifest Manifest, dir string, llmCfg *capability.LLMConfig, policy SandboxPolicy, toolEnv []string, capManager *capability.CapabilityManager) *AgenticTool {
+// an optional LLM config, sandbox policy, resolved env vars, a communication
+// capability for IPC directory management, and an optional pre-resolved wallet
+// address to inject into tool inputs.
+func NewAgenticTool(manifest Manifest, dir string, llmCfg *capability.LLMConfig, policy SandboxPolicy, toolEnv []string, commCap *capability.CommunicationCapability, walletAddress string) *AgenticTool {
 	timeout := DefaultToolTimeout
 	if manifest.Timeout != "" {
 		if d, err := time.ParseDuration(manifest.Timeout); err == nil && d > 0 {
@@ -43,7 +47,8 @@ func NewAgenticTool(manifest Manifest, dir string, llmCfg *capability.LLMConfig,
 		llmCfg:        llmCfg,
 		sandboxPolicy: policy,
 		toolEnv:       toolEnv,
-		capManager:    capManager,
+		commCap:       commCap,
+		walletAddress: walletAddress,
 	}
 }
 
@@ -55,50 +60,50 @@ func (t *AgenticTool) Description() string { return t.manifest.Description }
 func (t *AgenticTool) Call(ctx context.Context, input string) (string, error) {
 	taskInput := parseTaskInput(input)
 	taskInput.Type = "input"
-	if t.capManager != nil {
-		taskInput.AvailableCapabilities = t.capManager.BuildToolCapabilitySection()
+	if t.walletAddress != "" {
+		taskInput.Capabilities = map[string]string{
+			"wallet_address": t.walletAddress,
+		}
 	}
+
+	ipcDir, err := t.commCap.Allocate()
+	if err != nil {
+		return "", fmt.Errorf("allocating IPC directory: %w", err)
+	}
+	defer t.commCap.Release(ipcDir)
 
 	extraEnv := append([]string(nil), t.toolEnv...)
 	if t.llmCfg != nil {
 		extraEnv = append(extraEnv, t.llmCfg.Env()...)
 	}
 
-	handler := t.buildRequestHandler(ctx)
+	// Set SOLAI_IPC_DIR to the in-process path of the IPC directory.
+	// In the sandbox, the host ipcDir is bind-mounted at /run/solai.
+	policy := t.sandboxPolicy
+	if policy.BwrapPath != "" {
+		policy.IPCDir = ipcDir
+		extraEnv = append(extraEnv, "SOLAI_IPC_DIR=/run/solai")
+	} else {
+		extraEnv = append(extraEnv, "SOLAI_IPC_DIR="+ipcDir)
+	}
 
-	output, err := RunTool(ctx, t.dir, t.manifest.Executable, taskInput, t.timeout, extraEnv, t.sandboxPolicy, handler)
+	output, err := RunTool(ctx, t.dir, t.manifest.Executable, taskInput, t.timeout, extraEnv, policy)
 	if err != nil {
 		slog.Error("tool infrastructure error", "tool", t.manifest.Name, "err", err)
 		msg := fmt.Sprintf("Tool infrastructure error: %v", err)
 		return msg, err
 	}
 
-	if output.Type == "error" {
+	switch output.Type {
+	case "error":
 		var errMsg string
-		if err := json.Unmarshal(output.Output, &errMsg); err != nil {
-			errMsg = string(output.Output)
+		if err := json.Unmarshal(output.Payload, &errMsg); err != nil {
+			errMsg = string(output.Payload)
 		}
 		return fmt.Sprintf("Tool error: %s", errMsg), nil
+	case "request":
+		return string(output.Payload), nil
 	}
 
-	return string(output.Output), nil
-}
-
-// buildRequestHandler returns a RequestHandler that dispatches capability
-// requests from the tool to the coordinator's Regular capabilities.
-func (t *AgenticTool) buildRequestHandler(ctx context.Context) RequestHandler {
-	if t.capManager == nil {
-		return nil
-	}
-	return func(ctx context.Context, capName, action, input string) (string, error) {
-		c := t.capManager.GetByName(capName)
-		if c == nil {
-			return "", fmt.Errorf("unknown capability %q", capName)
-		}
-		if c.Class() != capability.Regular {
-			return "", fmt.Errorf("capability %q is not accessible to agentic tools", capName)
-		}
-		req, _ := json.Marshal(map[string]string{"action": action, "input": input})
-		return c.Execute(ctx, string(req))
-	}
+	return string(output.Payload), nil
 }

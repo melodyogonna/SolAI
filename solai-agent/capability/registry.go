@@ -133,33 +133,3 @@ func (m *CapabilityManager) BuildCapabilityPromptSection() string {
 	return b.String()
 }
 
-// BuildToolCapabilitySection generates the capability request documentation
-// injected into every agentic tool's system prompt. It covers all Regular
-// capabilities that have a non-empty ToolRequestDescription.
-// Returns an empty string if no such capabilities exist.
-func (m *CapabilityManager) BuildToolCapabilitySection() string {
-	var parts []string
-	for _, c := range m.capabilities {
-		if c.Class() != Regular {
-			continue
-		}
-		desc := c.ToolRequestDescription()
-		if desc == "" {
-			continue
-		}
-		parts = append(parts, fmt.Sprintf("### %s\n%s", c.Name(), desc))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join([]string{
-		"## Capability Requests",
-		"To request a coordinator capability, write to stdout:",
-		`{"type": "request", "capability": "<name>", "action": "<action>", "input": "<value>"}`,
-		"Your execution pauses until a response arrives on stdin:",
-		`{"type": "response", "output": "<value>"}`,
-		`{"type": "response", "error": "<message>"}`,
-		"",
-		strings.Join(parts, "\n\n"),
-	}, "\n")
-}

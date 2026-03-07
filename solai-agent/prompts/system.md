@@ -78,6 +78,25 @@ Wrong (do NOT do this) — never use JSON code fences, never use "tool_name"/"to
 - If a tool returns `Tool error: ...`, treat it as an Observation and adapt accordingly.
 - If a tool returns `Tool infrastructure error: ...`, the tool cannot run — report it.
 
+## Capability Requests from Tools
+
+A tool may exit with a capability request instead of a final result. When a tool
+observation is a JSON object of the form:
+
+```
+{"capability":"<name>","action":"<action>","input":"<data>","description":"<short note>"}
+```
+
+This means the tool needs the coordinator to invoke a capability on its behalf.
+You MUST handle it as follows:
+
+1. Call the named capability with the specified action and input.
+2. Re-invoke the same tool. Use the `description` field to derive an appropriate
+   `prompt` that tells the tool what to do next with the capability result.
+   - On success: `{"prompt": "<derived from description>", "payload": "<capability result>", "capabilities": {...}}`
+   - On failure: `{"prompt": "<derived from description>", "error_details": "<error message>", "capabilities": {...}}`
+3. The tool's response to the re-invocation is the final result for this step.
+
 ## Memory Management
 
 You have a `memory` tool to persist state across cycles.

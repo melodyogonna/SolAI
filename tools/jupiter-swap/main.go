@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,38 +21,16 @@ import (
 )
 
 const (
-	jupiterQuoteURL = "https://quote-api.jup.ag/v6/quote"
-	jupiterSwapURL  = "https://quote-api.jup.ag/v6/swap"
+	jupiterQuoteURL   = "https://quote-api.jup.ag/v6/quote"
+	jupiterSwapURL    = "https://quote-api.jup.ag/v6/swap"
+	jupiterExecuteURL = "https://quote-api.jup.ag/v6/execute"
 
-	jupiterLiteQuoteURL = "https://lite-api.jup.ag/swap/v1/quote"
-	jupiterLiteSwapURL  = "https://lite-api.jup.ag/swap/v1/swap"
+	jupiterLiteQuoteURL   = "https://lite-api.jup.ag/swap/v1/quote"
+	jupiterLiteSwapURL    = "https://lite-api.jup.ag/swap/v1/swap"
+	jupiterLiteExecuteURL = "https://lite-api.jup.ag/swap/v1/execute"
 )
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
-
-// ---- Capability request helpers ---------------------------------------------
-
-// requestCapability writes a capability request to stdout and reads the response
-// from stdin using the shared encoder/decoder.
-func requestCapability(enc *json.Encoder, dec *json.Decoder, capability, action, input string) (string, error) {
-	req := capabilityRequest{
-		Type:       "request",
-		Capability: capability,
-		Action:     action,
-		Input:      input,
-	}
-	if err := enc.Encode(req); err != nil {
-		return "", fmt.Errorf("writing capability request: %w", err)
-	}
-	var resp capabilityResponse
-	if err := dec.Decode(&resp); err != nil {
-		return "", fmt.Errorf("reading capability response: %w", err)
-	}
-	if resp.Error != "" {
-		return "", fmt.Errorf("capability %q error: %s", capability, resp.Error)
-	}
-	return resp.Output, nil
-}
 
 // ---- Rate limiter -----------------------------------------------------------
 
@@ -66,11 +45,11 @@ func newJupiterLimiter() ratelimit.RateLimitStrategy {
 	return ratelimit.NewFixedWindowLimiter(rps, time.Second)
 }
 
-func jupiterBaseURLs() (quoteURL, swapURL string) {
+func jupiterBaseURLs() (quoteURL, swapURL, executeURL string) {
 	if os.Getenv("JUPITER_API_KEY") != "" {
-		return jupiterQuoteURL, jupiterSwapURL
+		return jupiterQuoteURL, jupiterSwapURL, jupiterExecuteURL
 	}
-	return jupiterLiteQuoteURL, jupiterLiteSwapURL
+	return jupiterLiteQuoteURL, jupiterLiteSwapURL, jupiterLiteExecuteURL
 }
 
 // ---- Jupiter quote tool (internal agent tool) -------------------------------
@@ -183,48 +162,96 @@ func (t *jupiterSwapTxTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("Jupiter swap API returned empty transaction: %s", body)
 	}
 
-	out, _ := json.Marshal(map[string]string{
-		"swapTransaction": resp.SwapTransaction,
-		"note":            "Pass swapTransaction to the solana capability send_transaction action to sign and submit.",
-	})
-	return string(out), nil
+	// Write a "request" output asking the coordinator to sign the transaction,
+	// then exit. The coordinator will re-invoke this tool with the signed tx
+	// in input.Payload.
+	capReq := CapabilityRequest{
+		Capability:  "wallet",
+		Action:      "sign",
+		Input:       resp.SwapTransaction,
+		Description: "Sign and submit the swap transaction",
+	}
+	payload, _ := json.Marshal(capReq)
+	writeRequest(payload)
+	os.Exit(0)
+	return "", nil // unreachable
+}
+
+// ---- Jupiter submit-tx tool (phase 2) ---------------------------------------
+
+type jupiterSubmitTxTool struct {
+	executeURL string
+}
+
+// submitSignedTx posts a base64-encoded signed transaction to Jupiter's execute
+// endpoint and returns the transaction signature on success.
+func (t *jupiterSubmitTxTool) submit(ctx context.Context, signedTx string) (string, error) {
+	body, _ := json.Marshal(map[string]string{"signedTransaction": signedTx})
+	apiKey := os.Getenv("JUPITER_API_KEY")
+	resp, err := doPost(ctx, t.executeURL, body, apiKey)
+	if err != nil {
+		return "", fmt.Errorf("Jupiter execute: %w", err)
+	}
+	var result struct {
+		TxID string `json:"txid"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return "", fmt.Errorf("parsing execute response: %w", err)
+	}
+	if result.TxID == "" {
+		return "", fmt.Errorf("Jupiter execute returned no txid: %s", resp)
+	}
+	return result.TxID, nil
 }
 
 // ---- main -------------------------------------------------------------------
 
 func main() {
-	dec := json.NewDecoder(os.Stdin)
-	enc := json.NewEncoder(os.Stdout)
+	ipcDir := os.Getenv("SOLAI_IPC_DIR")
+	if ipcDir == "" {
+		fmt.Fprintln(os.Stderr, "SOLAI_IPC_DIR is not set")
+		os.Exit(1)
+	}
 
+	data, err := os.ReadFile(filepath.Join(ipcDir, "input.json"))
+	if err != nil {
+		writeError(fmt.Sprintf("failed to read input: %v", err))
+		return
+	}
 	var input ToolInput
-	if err := dec.Decode(&input); err != nil {
-		writeErrorEnc(enc, fmt.Sprintf("failed to read input: %v", err))
+	if err := json.Unmarshal(data, &input); err != nil {
+		writeError(fmt.Sprintf("failed to parse input: %v", err))
 		return
 	}
 
 	ctx := context.Background()
 
-	// Request wallet address if the coordinator has the wallet capability.
-	walletAddress := ""
-	if strings.Contains(input.AvailableCapabilities, "wallet") {
-		addr, err := requestCapability(enc, dec, "wallet", "address", "")
-		if err != nil {
-			// Non-fatal: we can still return a quote without the transaction.
-			fmt.Fprintf(os.Stderr, "wallet capability request failed: %v\n", err)
-		} else {
-			walletAddress = addr
-		}
-	}
+	// Wallet address is pre-injected by the coordinator via Capabilities.
+	walletAddress := input.Capabilities["wallet_address"]
 
-	llm, err := newLLM(ctx)
-	if err != nil {
-		writeErrorEnc(enc, fmt.Sprintf("LLM initialisation failed: %v", err))
+	quoteURL, swapURL, executeURL := jupiterBaseURLs()
+
+	// Phase 2: coordinator re-invoked us with a signed transaction in Payload.
+	if input.Payload != "" {
+		submitter := &jupiterSubmitTxTool{executeURL: executeURL}
+		txID, err := submitter.submit(ctx, input.Payload)
+		if err != nil {
+			writeError(fmt.Sprintf("submitting transaction: %v", err))
+			return
+		}
+		out, _ := json.Marshal(map[string]string{"txid": txID})
+		writeSuccess(out)
 		return
 	}
 
-	quoteURL, swapURL := jupiterBaseURLs()
-	limiter := newJupiterLimiter()
+	// Phase 1: get quote, build unsigned tx, request signing.
+	llm, err := newLLM(ctx)
+	if err != nil {
+		writeError(fmt.Sprintf("LLM initialisation failed: %v", err))
+		return
+	}
 
+	limiter := newJupiterLimiter()
 	tools := []lctools.Tool{
 		&jupiterQuoteTool{limiter: limiter, quoteURL: quoteURL},
 		&jupiterSwapTxTool{limiter: limiter, swapURL: swapURL, walletAddress: walletAddress},
@@ -235,8 +262,10 @@ func main() {
 	)
 	executor := agents.NewExecutor(agentInst)
 
-	prompt := fmt.Sprintf("Overview: %s\nTasks:\n- %s",
-		input.Overview, strings.Join(input.Tasks, "\n- "))
+	prompt := input.Prompt
+	if len(input.Tasks) > 0 {
+		prompt = fmt.Sprintf("%s\nTasks:\n- %s", input.Prompt, strings.Join(input.Tasks, "\n- "))
+	}
 
 	result, err := chains.Run(ctx, executor, prompt)
 	if err != nil {
@@ -244,18 +273,18 @@ func main() {
 		if i := strings.Index(err.Error(), parsePrefix); i >= 0 {
 			extracted := err.Error()[i+len(parsePrefix):]
 			if strings.HasPrefix(extracted, "Thought:") {
-				writeErrorEnc(enc, fmt.Sprintf("agent run failed: %v", err))
+				writeError(fmt.Sprintf("agent run failed: %v", err))
 				return
 			}
 			result = extracted
 		} else {
-			writeErrorEnc(enc, fmt.Sprintf("agent run failed: %v", err))
+			writeError(fmt.Sprintf("agent run failed: %v", err))
 			return
 		}
 	}
 
 	out, _ := json.Marshal(result)
-	enc.Encode(ToolOutput{Type: "success", Output: out}) //nolint:errcheck
+	writeSuccess(out)
 }
 
 // ---- HTTP helpers -----------------------------------------------------------
@@ -314,7 +343,22 @@ func stripMarkdownFence(s string) string {
 	return s
 }
 
-func writeErrorEnc(enc *json.Encoder, msg string) {
+func writeSuccess(data json.RawMessage) {
+	writeOutput(ToolOutput{Type: "success", Payload: data})
+}
+
+func writeError(msg string) {
 	out, _ := json.Marshal(msg)
-	enc.Encode(ToolOutput{Type: "error", Output: out}) //nolint:errcheck
+	writeOutput(ToolOutput{Type: "error", Payload: out})
+}
+
+func writeRequest(payload json.RawMessage) {
+	writeOutput(ToolOutput{Type: "request", Payload: payload})
+}
+
+func writeOutput(out ToolOutput) {
+	data, _ := json.Marshal(out)
+	if err := os.WriteFile(filepath.Join(os.Getenv("SOLAI_IPC_DIR"), "output.json"), data, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write output.json: %v\n", err)
+	}
 }

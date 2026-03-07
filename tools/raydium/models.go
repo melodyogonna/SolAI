@@ -3,15 +3,17 @@ package main
 import "encoding/json"
 
 type ToolInput struct {
-	Type                  string   `json:"type"`
-	Overview              string   `json:"overview"`
-	Tasks                 []string `json:"tasks"`
-	AvailableCapabilities string   `json:"available_capabilities,omitempty"`
+	Type         string            `json:"type"`
+	Prompt       string            `json:"prompt"`
+	Payload      string            `json:"payload,omitempty"`
+	Tasks        []string          `json:"tasks,omitempty"`
+	Capabilities map[string]string `json:"capabilities,omitempty"`
+	ErrorDetails string            `json:"error_details,omitempty"`
 }
 
 type ToolOutput struct {
-	Type   string          `json:"type"`
-	Output json.RawMessage `json:"output"`
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
 }
 
 // ---- Raydium v3 API types ---------------------------------------------------

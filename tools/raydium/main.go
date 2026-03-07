@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -118,9 +119,20 @@ func (t *searchPoolsTool) Call(ctx context.Context, input string) (string, error
 // ---- main -------------------------------------------------------------------
 
 func main() {
-	var input ToolInput
-	if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
+	ipcDir := os.Getenv("SOLAI_IPC_DIR")
+	if ipcDir == "" {
+		fmt.Fprintln(os.Stderr, "SOLAI_IPC_DIR is not set")
+		os.Exit(1)
+	}
+
+	data, err := os.ReadFile(filepath.Join(ipcDir, "input.json"))
+	if err != nil {
 		writeError(fmt.Sprintf("failed to read input: %v", err))
+		return
+	}
+	var input ToolInput
+	if err := json.Unmarshal(data, &input); err != nil {
+		writeError(fmt.Sprintf("failed to parse input: %v", err))
 		return
 	}
 
@@ -142,8 +154,10 @@ func main() {
 	)
 	executor := agents.NewExecutor(agentInst)
 
-	prompt := fmt.Sprintf("Overview: %s\nTasks:\n- %s",
-		input.Overview, strings.Join(input.Tasks, "\n- "))
+	prompt := input.Prompt
+	if len(input.Tasks) > 0 {
+		prompt = fmt.Sprintf("%s\nTasks:\n- %s", input.Prompt, strings.Join(input.Tasks, "\n- "))
+	}
 
 	result, err := chains.Run(ctx, executor, prompt)
 	if err != nil {
@@ -249,10 +263,17 @@ func stripMarkdownFence(s string) string {
 }
 
 func writeSuccess(data json.RawMessage) {
-	json.NewEncoder(os.Stdout).Encode(ToolOutput{Type: "success", Output: data})
+	writeOutput(ToolOutput{Type: "success", Payload: data})
 }
 
 func writeError(msg string) {
 	out, _ := json.Marshal(msg)
-	json.NewEncoder(os.Stdout).Encode(ToolOutput{Type: "error", Output: out})
+	writeOutput(ToolOutput{Type: "error", Payload: out})
+}
+
+func writeOutput(out ToolOutput) {
+	data, _ := json.Marshal(out)
+	if err := os.WriteFile(filepath.Join(os.Getenv("SOLAI_IPC_DIR"), "output.json"), data, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write output.json: %v\n", err)
+	}
 }

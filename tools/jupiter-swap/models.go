@@ -2,31 +2,29 @@ package main
 
 import "encoding/json"
 
-// ---- IPC protocol -----------------------------------------------------------
-
 type ToolInput struct {
-	Type                  string   `json:"type"`
-	Overview              string   `json:"overview"`
-	Tasks                 []string `json:"tasks"`
-	AvailableCapabilities string   `json:"available_capabilities,omitempty"`
+	Type         string            `json:"type"`
+	Prompt       string            `json:"prompt"`
+	Payload      string            `json:"payload,omitempty"`
+	Tasks        []string          `json:"tasks,omitempty"`
+	Capabilities map[string]string `json:"capabilities,omitempty"`
+	ErrorDetails string            `json:"error_details,omitempty"`
 }
 
 type ToolOutput struct {
-	Type   string          `json:"type"`
-	Output json.RawMessage `json:"output"`
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
 }
 
-type capabilityRequest struct {
-	Type       string `json:"type"`
-	Capability string `json:"capability"`
-	Action     string `json:"action"`
-	Input      string `json:"input"`
-}
-
-type capabilityResponse struct {
-	Type   string `json:"type"`
-	Output string `json:"output"`
-	Error  string `json:"error"`
+// CapabilityRequest is the payload written inside a "request" output when the
+// tool needs the coordinator to invoke a capability on its behalf.
+type CapabilityRequest struct {
+	Capability  string `json:"capability"`
+	Action      string `json:"action"`
+	Input       string `json:"input"`
+	// Description is a short, human-readable note the coordinator uses to
+	// derive the re-invocation prompt sent back to this tool.
+	Description string `json:"description"`
 }
 
 // ---- Jupiter API types ------------------------------------------------------

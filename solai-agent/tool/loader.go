@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,25 @@ func LoadTools(toolsDir string, provider *capability.LLMProvider, capManager *ca
 	entries, err := os.ReadDir(toolsDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading tools directory %s: %w", toolsDir, err)
+	}
+
+	// Extract the communication capability for IPC directory management.
+	var commCap *capability.CommunicationCapability
+	if c := capManager.GetByName("communication"); c != nil {
+		commCap, _ = c.(*capability.CommunicationCapability)
+	}
+	if commCap == nil {
+		// Fallback: create a standalone instance when running outside the normal
+		// capability setup (e.g. in tests or legacy env-var path).
+		commCap = capability.NewCommunicationCapability()
+	}
+
+	// Pre-resolve the wallet address to inject into tool inputs.
+	var walletAddress string
+	if wc := capManager.GetByName("wallet"); wc != nil {
+		if addr, err := wc.Execute(context.Background(), ""); err == nil {
+			walletAddress = addr
+		}
 	}
 
 	var loaded []tools.Tool
@@ -95,7 +115,7 @@ func LoadTools(toolsDir string, provider *capability.LLMProvider, capManager *ca
 			continue
 		}
 
-		loaded = append(loaded, NewAgenticTool(manifest, toolDir, llmCfg, policy, toolEnv, capManager))
+		loaded = append(loaded, NewAgenticTool(manifest, toolDir, llmCfg, policy, toolEnv, commCap, walletAddress))
 	}
 
 	return loaded, warnings, nil

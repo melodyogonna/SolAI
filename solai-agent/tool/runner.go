@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -14,66 +13,42 @@ import (
 	"time"
 )
 
-// ToolInput is the JSON structure written to a tool's stdin to start execution.
+// ToolInput is the JSON structure written to input.json in the IPC directory
+// before starting a tool.
 type ToolInput struct {
-	// Type is always "input". Included so tools can distinguish coordinator
-	// messages from capability responses using the same type field.
+	// Type is always "input".
 	Type string `json:"type"`
 
-	// Overview is a one-sentence description of the task.
-	Overview string `json:"overview"`
+	// Prompt describes what to do. Always present.
+	Prompt string `json:"prompt"`
+
+	// Payload carries raw data on re-invocation (e.g. a base64-encoded signed
+	// transaction returned by a capability). Empty on the initial invocation.
+	Payload string `json:"payload,omitempty"`
 
 	// Tasks is a list of discrete sub-tasks for the tool to accomplish, in order.
-	Tasks []string `json:"tasks"`
+	// May be empty on re-invocation.
+	Tasks []string `json:"tasks,omitempty"`
 
-	// AvailableCapabilities is the generated documentation block describing
-	// which Regular capabilities the tool can request, their actions, and
-	// input/output formats. Empty when no requestable capabilities are registered.
-	AvailableCapabilities string `json:"available_capabilities,omitempty"`
+	// Capabilities holds pre-injected capability values for the tool.
+	// Currently contains "wallet_address" when the wallet capability is active.
+	Capabilities map[string]string `json:"capabilities,omitempty"`
+
+	// ErrorDetails is non-empty when the re-invocation follows a failed
+	// capability request; it carries the error message from that failure.
+	ErrorDetails string `json:"error_details,omitempty"`
 }
 
-// ToolOutput is the final JSON structure read from a tool's stdout.
+// ToolOutput is the JSON structure read from output.json after the tool exits.
 type ToolOutput struct {
-	// Type is one of: "success", "error".
+	// Type is one of: "success", "error", "request".
 	Type string `json:"type"`
 
-	// Output holds the tool's result. For "success" it may be any JSON value.
+	// Payload holds the tool's result. For "success" it may be any JSON value.
 	// For "error" it is a human-readable string.
-	Output json.RawMessage `json:"output"`
+	// For "request" it is {"capability":"...","action":"...","input":"..."}.
+	Payload json.RawMessage `json:"payload"`
 }
-
-// ToolRequest is written by a tool to stdout to request a coordinator capability.
-// After writing this, the tool must block reading stdin for a ToolResponse.
-type ToolRequest struct {
-	// Type is always "request".
-	Type string `json:"type"`
-
-	// Capability is the name of the Regular capability to invoke (e.g. "wallet").
-	Capability string `json:"capability"`
-
-	// Action is the specific action to perform (e.g. "sign", "address").
-	Action string `json:"action"`
-
-	// Input is the action's input payload (e.g. base64-encoded bytes to sign).
-	Input string `json:"input"`
-}
-
-// ToolResponse is written by the coordinator to the tool's stdin in reply to a ToolRequest.
-type ToolResponse struct {
-	// Type is always "response".
-	Type string `json:"type"`
-
-	// Output is the capability's result on success.
-	Output string `json:"output,omitempty"`
-
-	// Error is a human-readable message when the capability request failed.
-	Error string `json:"error,omitempty"`
-}
-
-// RequestHandler dispatches a capability request from a tool to the coordinator.
-// capability is the name of the Regular capability; action and input correspond
-// to ToolRequest.Action and ToolRequest.Input.
-type RequestHandler func(ctx context.Context, capability, action, input string) (string, error)
 
 // FSBind is a filesystem path bind-mounted into the sandbox.
 type FSBind struct {
@@ -101,6 +76,11 @@ type SandboxPolicy struct {
 	// FSBinds is an ordered list of extra filesystem paths to expose inside
 	// the sandbox. Corresponds to the "file-manager" capability (future).
 	FSBinds []FSBind
+
+	// IPCDir is the host path of the per-invocation IPC directory. When
+	// non-empty and BwrapPath is set, it is bind-mounted at /run/solai inside
+	// the sandbox. The tool reads input.json and writes output.json there.
+	IPCDir string
 }
 
 // systemLibDirs lists host paths that dynamically-linked tool binaries need
@@ -152,23 +132,31 @@ func buildBwrapArgs(policy SandboxPolicy, toolDir, executable string) []string {
 		}
 	}
 
+	// Bind the IPC directory so the tool can read input.json and write output.json.
+	if policy.IPCDir != "" {
+		args = append(args, "--bind", policy.IPCDir, "/run/solai")
+	}
+
 	args = append(args, "--", "/app/"+rel)
 	return args
 }
 
-// RunTool spawns the tool, writes the ToolInput to its stdin, and runs the
-// bidirectional request/response loop until the tool writes a "success" or
-// "error" message.
+// RunTool writes input.json to the IPC directory, spawns the tool subprocess,
+// waits for it to exit, then reads and returns output.json.
 //
-// When a tool writes a "request" message, handler is called to dispatch the
-// capability action and the result is written back to the tool's stdin. Pass
-// nil for handler if the tool is known not to use capability requests.
+// The tool reads $SOLAI_IPC_DIR/input.json on startup and writes
+// $SOLAI_IPC_DIR/output.json before exiting. The IPC directory must already
+// exist with its host path set in policy.IPCDir; SOLAI_IPC_DIR in extraEnv
+// must point to the in-process view of that directory.
 //
 // The process is killed if ctx is cancelled or the per-tool timeout elapses.
-func RunTool(ctx context.Context, dir, executable string, input ToolInput, timeout time.Duration, extraEnv []string, policy SandboxPolicy, handler RequestHandler) (ToolOutput, error) {
+func RunTool(ctx context.Context, dir, executable string, input ToolInput, timeout time.Duration, extraEnv []string, policy SandboxPolicy) (ToolOutput, error) {
 	inputJSON, err := json.Marshal(input)
 	if err != nil {
 		return ToolOutput{}, fmt.Errorf("marshalling tool input: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(policy.IPCDir, "input.json"), inputJSON, 0600); err != nil {
+		return ToolOutput{}, fmt.Errorf("writing input.json: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -194,16 +182,6 @@ func RunTool(ctx context.Context, dir, executable string, input ToolInput, timeo
 		}
 	}
 
-	stdinPipe, err := cmd.StdinPipe()
-	if err != nil {
-		return ToolOutput{}, fmt.Errorf("creating stdin pipe: %w", err)
-	}
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return ToolOutput{}, fmt.Errorf("creating stdout pipe: %w", err)
-	}
-
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
@@ -211,97 +189,41 @@ func RunTool(ctx context.Context, dir, executable string, input ToolInput, timeo
 		return ToolOutput{}, fmt.Errorf("starting tool: %w", err)
 	}
 
-	// Write the initial input and keep stdin open for capability responses.
-	if _, err := fmt.Fprintf(stdinPipe, "%s\n", inputJSON); err != nil {
-		_ = cmd.Process.Kill()
-		return ToolOutput{}, fmt.Errorf("writing tool input: %w", err)
-	}
-
-	// Process messages until success/error or an error.
-	result, loopErr := processMessages(ctx, stdoutPipe, stdinPipe, handler)
-
-	// Close stdin (signals EOF to the tool) and drain any remaining stdout
-	// to prevent the subprocess from blocking on a full pipe buffer.
-	stdinPipe.Close()
-	io.Copy(io.Discard, stdoutPipe) //nolint:errcheck
-
 	waitErr := cmd.Wait()
-
-	if loopErr != nil {
-		return ToolOutput{}, loopErr
-	}
-	if result.Type == "" {
-		// No output received — report the process exit error if available.
-		if waitErr != nil {
-			if ctx.Err() != nil {
-				return ToolOutput{}, ctx.Err()
-			}
-			stderrStr := stderrBuf.String()
-			if stderrStr != "" {
-				return ToolOutput{}, fmt.Errorf("tool process failed: %w\nstderr: %s", waitErr, stderrStr)
-			}
-			return ToolOutput{}, fmt.Errorf("tool process failed: %w", waitErr)
+	if waitErr != nil {
+		if ctx.Err() != nil {
+			return ToolOutput{}, ctx.Err()
 		}
-		return ToolOutput{}, fmt.Errorf("tool produced no output")
-	}
-	return result, nil
-}
-
-// processMessages reads newline-delimited JSON messages from stdout.
-// On "request" it dispatches via handler and writes the response to stdin.
-// On "success" or "error" it returns the final ToolOutput.
-func processMessages(ctx context.Context, stdout io.Reader, stdin io.Writer, handler RequestHandler) (ToolOutput, error) {
-	dec := json.NewDecoder(stdout)
-	for {
-		var msg struct {
-			Type       string          `json:"type"`
-			Capability string          `json:"capability"`
-			Action     string          `json:"action"`
-			Input      string          `json:"input"`
-			Output     json.RawMessage `json:"output"`
+		stderrStr := stderrBuf.String()
+		if stderrStr != "" {
+			return ToolOutput{}, fmt.Errorf("tool process failed: %w\nstderr: %s", waitErr, stderrStr)
 		}
-		if err := dec.Decode(&msg); err != nil {
-			if err == io.EOF {
-				return ToolOutput{}, nil
-			}
-			return ToolOutput{}, fmt.Errorf("reading tool output: %w", err)
-		}
-
-		switch msg.Type {
-		case "request":
-			resp := dispatchCapabilityRequest(ctx, msg.Capability, msg.Action, msg.Input, handler)
-			respJSON, _ := json.Marshal(resp)
-			if _, err := fmt.Fprintf(stdin, "%s\n", respJSON); err != nil {
-				return ToolOutput{}, fmt.Errorf("writing capability response: %w", err)
-			}
-
-		case "success", "error":
-			return ToolOutput{Type: msg.Type, Output: msg.Output}, nil
-		}
+		return ToolOutput{}, fmt.Errorf("tool process failed: %w", waitErr)
 	}
-}
 
-// dispatchCapabilityRequest calls the handler and wraps the result in a ToolResponse.
-func dispatchCapabilityRequest(ctx context.Context, capName, action, input string, handler RequestHandler) ToolResponse {
-	if handler == nil {
-		return ToolResponse{Type: "response", Error: "capability requests are not supported"}
-	}
-	output, err := handler(ctx, capName, action, input)
+	data, err := os.ReadFile(filepath.Join(policy.IPCDir, "output.json"))
 	if err != nil {
-		return ToolResponse{Type: "response", Error: err.Error()}
+		return ToolOutput{}, fmt.Errorf("reading output.json: %w", err)
 	}
-	return ToolResponse{Type: "response", Output: output}
+	var output ToolOutput
+	if err := json.Unmarshal(data, &output); err != nil {
+		return ToolOutput{}, fmt.Errorf("parsing output.json: %w", err)
+	}
+	if output.Type == "" {
+		return ToolOutput{}, fmt.Errorf("tool produced no output (output.json has empty type)")
+	}
+	return output, nil
 }
 
 // parseTaskInput converts the LLM's action input string into a ToolInput.
 // The LLM may produce either a JSON object or a plain English string.
 func parseTaskInput(input string) ToolInput {
 	var ti ToolInput
-	if err := json.Unmarshal([]byte(input), &ti); err == nil && ti.Overview != "" {
+	if err := json.Unmarshal([]byte(input), &ti); err == nil && ti.Prompt != "" {
 		return ti
 	}
 	return ToolInput{
-		Overview: input,
-		Tasks:    []string{input},
+		Prompt: input,
+		Tasks:  []string{input},
 	}
 }

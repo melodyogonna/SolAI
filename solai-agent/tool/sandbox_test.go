@@ -43,17 +43,31 @@ type probeOutput struct {
 // the decoded probeOutput.
 func runProbe(t *testing.T, dir, exe string, policy tool.SandboxPolicy) probeOutput {
 	t.Helper()
-	input := tool.ToolInput{Overview: "probe", Tasks: []string{"probe"}}
-	out, err := tool.RunTool(context.Background(), dir, exe, input, 10*time.Second, nil, policy, nil)
+
+	// Create an IPC directory for the probe to read input and write output.
+	ipcDir := t.TempDir()
+	policy.IPCDir = ipcDir
+
+	// Set SOLAI_IPC_DIR to the in-process path; inside bwrap it is bound at /run/solai.
+	var ipcEnvVal string
+	if policy.BwrapPath != "" {
+		ipcEnvVal = "/run/solai"
+	} else {
+		ipcEnvVal = ipcDir
+	}
+	extraEnv := []string{"SOLAI_IPC_DIR=" + ipcEnvVal}
+
+	input := tool.ToolInput{Prompt: "probe", Tasks: []string{"probe"}}
+	out, err := tool.RunTool(context.Background(), dir, exe, input, 10*time.Second, extraEnv, policy)
 	if err != nil {
 		t.Fatalf("RunTool: %v", err)
 	}
 	if out.Type != "success" {
-		t.Fatalf("probe returned type %q: %s", out.Type, out.Output)
+		t.Fatalf("probe returned type %q: %s", out.Type, out.Payload)
 	}
 	var p probeOutput
-	if err := json.Unmarshal(out.Output, &p); err != nil {
-		t.Fatalf("decoding probe output: %v (raw: %s)", err, out.Output)
+	if err := json.Unmarshal(out.Payload, &p); err != nil {
+		t.Fatalf("decoding probe output: %v (raw: %s)", err, out.Payload)
 	}
 	return p
 }
