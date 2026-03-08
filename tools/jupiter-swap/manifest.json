@@ -1,7 +1,7 @@
 {
   "name": "jupiter-swap",
   "description": "Quotes and executes Solana token swap transactions using the Jupiter aggregator. Input: a plain-language description of the swap (e.g. \"Swap 0.1 SOL for USDC\" or \"Exchange 50 USDC for JUP with 1% slippage\"). Do NOT pass JSON or structured data — describe the swap in natural language. The tool fetches the best route and quote, requests wallet signing from the coordinator, then submits the transaction.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "executable": "./bin/jupiter-swap",
   "required_capabilities": ["network-manager"],
   "payloads": [
