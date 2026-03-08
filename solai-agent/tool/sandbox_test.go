@@ -57,7 +57,7 @@ func runProbe(t *testing.T, dir, exe string, policy tool.SandboxPolicy) probeOut
 	}
 	extraEnv := []string{"SOLAI_IPC_DIR=" + ipcEnvVal}
 
-	input := tool.ToolInput{Prompt: "probe", Tasks: []string{"probe"}}
+	input := tool.ToolInput{Prompt: "probe"}
 	out, err := tool.RunTool(context.Background(), dir, exe, input, 10*time.Second, extraEnv, policy)
 	if err != nil {
 		t.Fatalf("RunTool: %v", err)

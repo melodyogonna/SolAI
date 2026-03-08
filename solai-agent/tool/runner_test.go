@@ -7,63 +7,59 @@ import (
 // ---- parseTaskInput ---------------------------------------------------------
 
 func TestParseTaskInput_ValidJSON(t *testing.T) {
-	input := `{"overview":"fetch prices","tasks":["get SOL","get USDC"]}`
+	input := `{"prompt":"fetch prices","payload":{"wallet_address":"ABC"}}`
 	got := parseTaskInput(input)
-	if got.Overview != "fetch prices" {
-		t.Errorf("Overview: got %q, want %q", got.Overview, "fetch prices")
+	if got.Prompt != "fetch prices" {
+		t.Errorf("Prompt: got %q, want %q", got.Prompt, "fetch prices")
 	}
-	if len(got.Tasks) != 2 {
-		t.Errorf("Tasks: got %d, want 2", len(got.Tasks))
-	}
-	if got.Tasks[0] != "get SOL" {
-		t.Errorf("Tasks[0]: got %q", got.Tasks[0])
+	if got.Payload["wallet_address"] != "ABC" {
+		t.Errorf("Payload[wallet_address]: got %q, want %q", got.Payload["wallet_address"], "ABC")
 	}
 }
 
 func TestParseTaskInput_PlainString(t *testing.T) {
 	input := "get the current SOL price"
 	got := parseTaskInput(input)
-	if got.Overview != input {
-		t.Errorf("Overview: got %q, want %q", got.Overview, input)
+	if got.Prompt != input {
+		t.Errorf("Prompt: got %q, want %q", got.Prompt, input)
 	}
-	if len(got.Tasks) != 1 || got.Tasks[0] != input {
-		t.Errorf("Tasks: got %v, want [%q]", got.Tasks, input)
+	if len(got.Payload) != 0 {
+		t.Errorf("Payload: expected empty, got %v", got.Payload)
 	}
 }
 
-func TestParseTaskInput_JSONWithNoOverview_FallsBack(t *testing.T) {
-	// Valid JSON but no overview field — fall back to plain-string path.
-	input := `{"tasks":["step 1"]}`
+func TestParseTaskInput_JSONWithNoPrompt_FallsBack(t *testing.T) {
+	// Valid JSON but no prompt field — fall back to plain-string path.
+	input := `{"payload":{"key":"val"}}`
 	got := parseTaskInput(input)
-	if got.Overview != input {
-		t.Errorf("expected fallback to plain string, got Overview=%q", got.Overview)
+	if got.Prompt != input {
+		t.Errorf("expected fallback to plain string, got Prompt=%q", got.Prompt)
 	}
 }
 
 func TestParseTaskInput_InvalidJSON_FallsBack(t *testing.T) {
 	input := "{broken json"
 	got := parseTaskInput(input)
-	if got.Overview != input {
-		t.Errorf("expected fallback, got Overview=%q", got.Overview)
+	if got.Prompt != input {
+		t.Errorf("expected fallback, got Prompt=%q", got.Prompt)
 	}
-	if len(got.Tasks) != 1 || got.Tasks[0] != input {
-		t.Errorf("unexpected Tasks: %v", got.Tasks)
+	if len(got.Payload) != 0 {
+		t.Errorf("unexpected Payload: %v", got.Payload)
 	}
 }
 
 func TestParseTaskInput_EmptyString(t *testing.T) {
 	got := parseTaskInput("")
-	// Empty string is not valid JSON with overview; falls back.
-	if got.Overview != "" {
-		t.Errorf("Overview: got %q, want empty", got.Overview)
+	if got.Prompt != "" {
+		t.Errorf("Prompt: got %q, want empty", got.Prompt)
 	}
 }
 
-func TestParseTaskInput_JSONWithTasksPreserved(t *testing.T) {
-	input := `{"overview":"do thing","tasks":["a","b","c"]}`
+func TestParseTaskInput_JSONWithPayloadPreserved(t *testing.T) {
+	input := `{"prompt":"do thing","payload":{"a":"1","b":"2","c":"3"}}`
 	got := parseTaskInput(input)
-	if len(got.Tasks) != 3 {
-		t.Errorf("expected 3 tasks, got %d", len(got.Tasks))
+	if len(got.Payload) != 3 {
+		t.Errorf("expected 3 payload entries, got %d", len(got.Payload))
 	}
 }
 
