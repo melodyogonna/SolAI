@@ -3,6 +3,7 @@ package capability
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -348,6 +349,89 @@ func TestMemoryCapability_BuildMemorySection_ContainsAllSubsections(t *testing.T
 
 func TestMemoryCapability_ImplementsMemorySectionProvider(t *testing.T) {
 	var _ MemorySectionProvider = NewMemoryCapability()
+}
+
+func TestMemoryCapability_Execute_CompleteTask_NonExistent(t *testing.T) {
+	// Completing a task that was never added should be a no-op, not an error.
+	m := NewMemoryCapability()
+	out, err := m.Execute(context.Background(), `{"action":"complete_task","task":"ghost"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	assertOK(t, out)
+	if len(m.pending) != 0 {
+		t.Errorf("pending should remain empty, got %v", m.pending)
+	}
+}
+
+func TestMemoryCapability_Execute_RemovePending_NonExistent(t *testing.T) {
+	// Removing a task that does not exist should be a no-op.
+	m := NewMemoryCapability()
+	m.Execute(context.Background(), `{"action":"add_pending","task":"real task"}`)
+	out, err := m.Execute(context.Background(), `{"action":"remove_pending","task":"ghost"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	assertOK(t, out)
+	if len(m.pending) != 1 || m.pending[0] != "real task" {
+		t.Errorf("real task should be unaffected, got %v", m.pending)
+	}
+}
+
+func TestMemoryCapability_Execute_AddObservation_RingEvictsOldest(t *testing.T) {
+	// The ring must drop the oldest entries, not the newest.
+	m := NewMemoryCapability()
+	for i := 0; i < maxObservations; i++ {
+		m.Execute(context.Background(), fmt.Sprintf(`{"action":"add_observation","content":"obs%d"}`, i))
+	}
+	// Add one more — "obs0" should be evicted.
+	m.Execute(context.Background(), `{"action":"add_observation","content":"newest"}`)
+	if len(m.observations) != maxObservations {
+		t.Fatalf("ring length: got %d, want %d", len(m.observations), maxObservations)
+	}
+	if m.observations[0] == "obs0" {
+		t.Error("oldest entry obs0 should have been evicted")
+	}
+	if m.observations[maxObservations-1] != "newest" {
+		t.Errorf("newest entry should be last, got %q", m.observations[maxObservations-1])
+	}
+}
+
+func TestMemoryCapability_Execute_UpdatePlan_ClearsWithEmpty(t *testing.T) {
+	m := NewMemoryCapability()
+	m.Execute(context.Background(), `{"action":"update_plan","plan":"old plan"}`)
+	m.Execute(context.Background(), `{"action":"update_plan","plan":""}`)
+	if m.plan != "" {
+		t.Errorf("expected plan cleared to empty, got %q", m.plan)
+	}
+}
+
+func TestMemoryCapability_BuildMemorySection_NoneForEmptySubfields(t *testing.T) {
+	// When only a plan is set, the other subsections should show "(none)".
+	m := NewMemoryCapability()
+	m.Execute(context.Background(), `{"action":"update_plan","plan":"just a plan"}`)
+	sec := m.BuildMemorySection()
+	if !strings.Contains(sec, "(none)") {
+		t.Errorf("expected (none) placeholder for empty subsections, got:\n%s", sec)
+	}
+}
+
+func TestMemoryCapability_ConcurrentAccess(t *testing.T) {
+	m := NewMemoryCapability()
+	const goroutines = 20
+	done := make(chan struct{})
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			m.Execute(context.Background(), `{"action":"add_observation","content":"concurrent"}`)
+			m.Execute(context.Background(), `{"action":"add_pending","task":"concurrent task"}`)
+			m.Execute(context.Background(), `{"action":"complete_task","task":"concurrent task"}`)
+			m.BuildMemorySection()
+			done <- struct{}{}
+		}()
+	}
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
 }
 
 // assertOK checks that Execute returned {"ok":true}.
