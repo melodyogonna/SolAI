@@ -41,7 +41,10 @@ SolAI operates in a **ReAct loop** (Reason → Act → Observe). Each cycle:
 4. It produces a structured summary of what was accomplished, what failed, and what to try next.
 5. It immediately begins the next cycle. Each cycle has a configurable timeout (`cycle-timeout`) to prevent runaway LLM calls.
 
-Each cycle creates a **fresh agent instance** — there is no state carried between cycles at the LLM level. Persistent state lives in tools and on-chain.
+State is carried across cycles in two ways:
+
+- **Conversation window** — the last 3 cycles of conversation history are shared with each new agent instance so it has context on recent actions.
+- **Memory capability** — the agent can explicitly persist a current plan, observations, pending tasks, and completed tasks across cycles by calling the built-in `memory` tool.
 
 ---
 
@@ -120,15 +123,15 @@ solai start
 
 __agent-run (inside sandbox)
   └─ agent.LoadConfigFrom()         reads /etc/solai/config.json
-  └─ googleai.New()                 initialises Gemini LLM
-  └─ capability.SetUp()             wallet, network-manager
+  └─ newLLM()                       initialises coordinator LLM (google/openai/anthropic)
+  └─ capability.SetUp()             communication, wallet, solana, network-manager, memory
   └─ agent.Run()                    autonomous cycle loop
        └─ SystemManager.Setup()     loads tools from /tools, extracts bwrap for tool sandboxing
        └─ SystemManager.Start(ctx)  background cleanup jobs
-       └─ ReAct cycle loop
-            └─ buildCyclePrompt()   injects capability context (wallet address, etc.)
-            └─ runCycle()           OneShotAgent → chains.Run
-                 └─ AgenticTool.Call()  spawns tool subprocess via stdin/stdout JSON
+       └─ ReAct cycle loop (shares ConversationWindowBuffer across cycles)
+            └─ buildCyclePrompt()   injects capabilities, agent memory, user goals
+            └─ runCycle()           OneShotAgent → chains.Run (exponential retry on transient errors)
+                 └─ AgenticTool.Call()   writes input.json → spawns tool → reads output.json
                       └─ bwrap (nested)  each tool runs in its own sandbox
 ```
 
@@ -136,15 +139,16 @@ __agent-run (inside sandbox)
 
 | Package | Responsibility |
 |---|---|
-| `cli/` | Cobra commands: `install`, `config`, `start`, `__agent-run` |
+| `cli/` | Cobra commands: `install`, `uninstall`, `config`, `start`, `__agent-run` |
 | `config/` | `~/.solai/config.json` — load, save, set, get |
 | `registry/` | Tool installation from GitHub releases |
 | `agent/` | Autonomous cycle loop, prompt assembly, config loading |
-| `capability/` | Capability system: wallet, LLM provider registry, SystemManager |
-| `tool/` | Tool discovery, manifest parsing, subprocess IPC |
+| `capability/` | Capability system: wallet, solana, memory, LLM provider, SystemManager |
+| `tool/` | Tool discovery, manifest parsing, file-based IPC, sandbox policy |
 | `sandbox/` | Embedded bwrap binary, extraction |
 | `prompts/` | Embedded system prompt (`system.md`) |
 | `wallet/` | BIP39 seed derivation, ed25519 keypair, Base58 encoding |
+| `ratelimit/` | `ExponentialRetry` (agent cycles), `FixedWindowLimiter` (tool rate limiting) |
 
 ### Sandboxing
 
@@ -156,20 +160,24 @@ Tools and the agent itself are isolated using [bubblewrap](https://github.com/co
 
 ### Capabilities
 
-Capabilities are system-level features injected at startup, separate from agentic tools.
+Capabilities are system-level features injected at startup, separate from agentic tools. Each has a class that determines who can see and use it:
 
-| Class | Visibility | Example |
+| Class | Accessible to | Purpose |
 |---|---|---|
-| `Core` | Invisible — background infrastructure | `SystemManager` |
-| `Internal` | Registered as callable LLM tools; also injected into the cycle prompt | `WalletCapability`, `SolanaCapability` |
-| `Regular` | Grants sandbox permissions to tools that request them | `NetworkManagerCapability` |
+| `Core` | Nobody | Background infrastructure; never exposed to any LLM |
+| `Internal` | Coordinator LLM only | Callable tool + injected into the cycle prompt |
+| `Regular` | Coordinator LLM and agentic tools | Same as Internal, plus tools can request actions via the capability request protocol |
 
 **Built-in capabilities:**
 
-| Capability | Description |
-|---|---|
-| `wallet` | Returns the agent's Solana wallet public address |
-| `solana` | Direct Solana RPC: `get_balance`, `transfer_sol`, `get_recent_blockhash`, `send_transaction`, `get_account_info` |
+| Capability | Class | Description |
+|---|---|---|
+| `system-manager` | Core | Owns tool loading, sandbox extraction, cleanup job scheduling |
+| `communication` | Core | Allocates per-invocation IPC directories for tool subprocess communication |
+| `wallet` | Regular | Agent's Solana keypair — `address` and `sign` actions; address is auto-injected into tool payloads |
+| `solana` | Regular | Solana RPC: `get_balance`, `transfer_sol`, `get_recent_blockhash`, `send_transaction`, `get_account_info` |
+| `network-manager` | Regular | Grants `--share-net` to tool sandboxes that declare it; no runtime actions |
+| `memory` | Internal | Persists plan, observations, pending tasks, and completed tasks across cycles |
 
 ---
 
@@ -192,20 +200,27 @@ Tools are downloaded from GitHub releases and stored in `~/.solai/tools/`. The r
 
 ### Writing a tool
 
-Tools are standalone executables (any language) that communicate via stdin/stdout JSON.
+Tools are standalone executables (any language) that communicate via file-based JSON IPC.
 
 **IPC protocol:**
 
-```json
-// Written to tool stdin
-{ "overview": "One sentence describing the objective.", "tasks": ["Step 1", "Step 2"] }
+Before spawning a tool the coordinator allocates a temporary directory and sets `$SOLAI_IPC_DIR` in the tool's environment (host path when unsandboxed; `/run/solai` inside the sandbox). The tool reads `$SOLAI_IPC_DIR/input.json` on startup, does its work, writes `$SOLAI_IPC_DIR/output.json`, and exits.
 
-// Read from tool stdout
-{ "type": "success", "output": "..." }
-{ "type": "error",   "output": "something went wrong" }
+```json
+// $SOLAI_IPC_DIR/input.json  (coordinator → tool)
+{ "prompt": "One sentence describing the objective.", "payload": { "wallet_address": "ABC...XYZ" } }
 ```
 
-Tool errors are returned as strings in `output` so the LLM can observe them in the ReAct loop and adapt.
+```json
+// $SOLAI_IPC_DIR/output.json  (tool → coordinator)
+{ "type": "success", "payload": <any JSON value> }
+{ "type": "error",   "payload": "human-readable error string" }
+{ "type": "request", "payload": { "capability": "<name>", "action": "<action>", "input": "<value>", "instruction": "<natural language for the coordinator>" } }
+```
+
+`success` and `error` are terminal. `request` is a capability request: the tool writes it and exits immediately. The coordinator reads the `instruction` field and follows it — typically by calling the named capability and re-invoking the tool with the result in `payload`. No re-invocation logic is hardcoded in tool binaries; the inner tool LLM composes the request dynamically.
+
+Tool errors are returned as strings in `payload` so the coordinator LLM can observe them in the ReAct loop and adapt.
 
 **manifest.json:**
 
@@ -215,9 +230,14 @@ Tool errors are returned as strings in `output` so the LLM can observe them in t
   "description": "Fetches current USD prices for Solana tokens from Jupiter.",
   "version": "1.0.0",
   "executable": "./bin/token-price",
-  "required_capabilities": ["network-manager"]
+  "required_capabilities": ["network-manager"],
+  "payloads": [
+    { "name": "wallet_address", "description": "Solana wallet public key", "source": "wallet" }
+  ]
 }
 ```
+
+`payloads` declares named values the tool expects in `input.json`'s `payload` map. Entries with a `source` field (e.g. `"wallet"`) are resolved automatically at load time by calling that capability — no LLM involvement. Entries without a `source` are supplied by the coordinator LLM on re-invocation when fulfilling a capability request.
 
 For tools that need runtime environment variables (e.g. API keys), declare them in `env`. The agent reads values from `tool-env.<name>.*` in the config and injects them into the tool's environment:
 
