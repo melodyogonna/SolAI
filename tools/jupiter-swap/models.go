@@ -3,12 +3,8 @@ package main
 import "encoding/json"
 
 type ToolInput struct {
-	Type         string            `json:"type"`
-	Prompt       string            `json:"prompt"`
-	Payload      string            `json:"payload,omitempty"`
-	Tasks        []string          `json:"tasks,omitempty"`
-	Capabilities map[string]string `json:"capabilities,omitempty"`
-	ErrorDetails string            `json:"error_details,omitempty"`
+	Prompt  string            `json:"prompt"`
+	Payload map[string]string `json:"payload,omitempty"`
 }
 
 type ToolOutput struct {
@@ -19,12 +15,12 @@ type ToolOutput struct {
 // CapabilityRequest is the payload written inside a "request" output when the
 // tool needs the coordinator to invoke a capability on its behalf.
 type CapabilityRequest struct {
-	Capability  string `json:"capability"`
-	Action      string `json:"action"`
-	Input       string `json:"input"`
-	// Description is a short, human-readable note the coordinator uses to
-	// derive the re-invocation prompt sent back to this tool.
-	Description string `json:"description"`
+	Capability string `json:"capability"`
+	Action     string `json:"action"`
+	Input      string `json:"input"`
+	// Instruction is natural language telling the coordinator LLM what to do
+	// after calling the capability (e.g. re-invoke this tool with payloads).
+	Instruction string `json:"instruction"`
 }
 
 // ---- Jupiter API types ------------------------------------------------------

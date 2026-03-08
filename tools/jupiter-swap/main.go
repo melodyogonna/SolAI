@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,13 +22,11 @@ import (
 )
 
 const (
-	jupiterQuoteURL   = "https://quote-api.jup.ag/v6/quote"
-	jupiterSwapURL    = "https://quote-api.jup.ag/v6/swap"
-	jupiterExecuteURL = "https://quote-api.jup.ag/v6/execute"
+	jupiterQuoteURL = "https://quote-api.jup.ag/v6/quote"
+	jupiterSwapURL  = "https://quote-api.jup.ag/v6/swap"
 
-	jupiterLiteQuoteURL   = "https://lite-api.jup.ag/swap/v1/quote"
-	jupiterLiteSwapURL    = "https://lite-api.jup.ag/swap/v1/swap"
-	jupiterLiteExecuteURL = "https://lite-api.jup.ag/swap/v1/execute"
+	jupiterLiteQuoteURL = "https://lite-api.jup.ag/swap/v1/quote"
+	jupiterLiteSwapURL  = "https://lite-api.jup.ag/swap/v1/swap"
 )
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
@@ -45,11 +44,11 @@ func newJupiterLimiter() ratelimit.RateLimitStrategy {
 	return ratelimit.NewFixedWindowLimiter(rps, time.Second)
 }
 
-func jupiterBaseURLs() (quoteURL, swapURL, executeURL string) {
+func jupiterBaseURLs() (quoteURL, swapURL string) {
 	if os.Getenv("JUPITER_API_KEY") != "" {
-		return jupiterQuoteURL, jupiterSwapURL, jupiterExecuteURL
+		return jupiterQuoteURL, jupiterSwapURL
 	}
-	return jupiterLiteQuoteURL, jupiterLiteSwapURL, jupiterLiteExecuteURL
+	return jupiterLiteQuoteURL, jupiterLiteSwapURL
 }
 
 // ---- Jupiter quote tool (internal agent tool) -------------------------------
@@ -70,6 +69,7 @@ Returns: quote with expected output amount, price impact, and route details.`
 }
 
 func (t *jupiterQuoteTool) Call(ctx context.Context, input string) (string, error) {
+	slog.Info("tool call", "tool", t.Name(), "input", input)
 	input = stripMarkdownFence(input)
 	var req struct {
 		InputMint   string `json:"inputMint"`
@@ -78,10 +78,10 @@ func (t *jupiterQuoteTool) Call(ctx context.Context, input string) (string, erro
 		SlippageBps int    `json:"slippageBps"`
 	}
 	if err := json.Unmarshal([]byte(input), &req); err != nil {
-		return "", fmt.Errorf("invalid input JSON: %w", err)
+		return fmt.Sprintf("Error: invalid JSON. Expected format: {\"inputMint\":\"<mint>\",\"outputMint\":\"<mint>\",\"amount\":<integer_base_units>}. Got: %s", input), nil
 	}
 	if req.InputMint == "" || req.OutputMint == "" || req.Amount <= 0 {
-		return "", fmt.Errorf("inputMint, outputMint, and amount (>0) are required")
+		return fmt.Sprintf("Error: inputMint, outputMint, and amount (>0) are required. Got: %s", input), nil
 	}
 	if req.SlippageBps == 0 {
 		req.SlippageBps = 50
@@ -119,6 +119,7 @@ The coordinator will sign and submit this transaction via the Solana capability.
 }
 
 func (t *jupiterSwapTxTool) Call(ctx context.Context, input string) (string, error) {
+	slog.Info("tool call", "tool", t.Name(), "input_len", len(input))
 	input = stripMarkdownFence(input)
 	if t.walletAddress == "" {
 		return "", fmt.Errorf("wallet address not available — cannot build swap transaction")
@@ -130,7 +131,7 @@ func (t *jupiterSwapTxTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("input must be a valid Jupiter quote JSON: %w", err)
 	}
 	if _, ok := quote["inputMint"]; !ok {
-		return "", fmt.Errorf("input does not look like a Jupiter quote response (missing inputMint)")
+		return "Error: input does not look like a Jupiter quote response (missing inputMint). Pass the complete JSON output from jupiter-quote verbatim.", nil
 	}
 
 	if err := t.limiter.Wait(ctx); err != nil {
@@ -162,56 +163,24 @@ func (t *jupiterSwapTxTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("Jupiter swap API returned empty transaction: %s", body)
 	}
 
-	// Write a "request" output asking the coordinator to sign the transaction,
-	// then exit. The coordinator will re-invoke this tool with the signed tx
-	// in input.Payload.
-	capReq := CapabilityRequest{
-		Capability:  "wallet",
-		Action:      "sign",
-		Input:       resp.SwapTransaction,
-		Description: "Sign and submit the swap transaction",
-	}
-	payload, _ := json.Marshal(capReq)
-	writeRequest(payload)
-	os.Exit(0)
-	return "", nil // unreachable
-}
-
-// ---- Jupiter submit-tx tool (phase 2) ---------------------------------------
-
-type jupiterSubmitTxTool struct {
-	executeURL string
-}
-
-// submitSignedTx posts a base64-encoded signed transaction to Jupiter's execute
-// endpoint and returns the transaction signature on success.
-func (t *jupiterSubmitTxTool) submit(ctx context.Context, signedTx string) (string, error) {
-	body, _ := json.Marshal(map[string]string{"signedTransaction": signedTx})
-	apiKey := os.Getenv("JUPITER_API_KEY")
-	resp, err := doPost(ctx, t.executeURL, body, apiKey)
-	if err != nil {
-		return "", fmt.Errorf("Jupiter execute: %w", err)
-	}
-	var result struct {
-		TxID string `json:"txid"`
-	}
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return "", fmt.Errorf("parsing execute response: %w", err)
-	}
-	if result.TxID == "" {
-		return "", fmt.Errorf("Jupiter execute returned no txid: %s", resp)
-	}
-	return result.TxID, nil
+	// Return the unsigned transaction to the inner LLM. The LLM will see
+	// the available capabilities section in the prompt (injected by the
+	// coordinator) and can generate a capability request as its Final Answer.
+	slog.Info("returning unsigned transaction to inner LLM")
+	return resp.SwapTransaction, nil
 }
 
 // ---- main -------------------------------------------------------------------
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+
 	ipcDir := os.Getenv("SOLAI_IPC_DIR")
 	if ipcDir == "" {
 		fmt.Fprintln(os.Stderr, "SOLAI_IPC_DIR is not set")
 		os.Exit(1)
 	}
+	slog.Info("tool starting", "ipc_dir", ipcDir)
 
 	data, err := os.ReadFile(filepath.Join(ipcDir, "input.json"))
 	if err != nil {
@@ -223,33 +192,23 @@ func main() {
 		writeError(fmt.Sprintf("failed to parse input: %v", err))
 		return
 	}
+	slog.Info("input received", "prompt", input.Prompt, "has_wallet", input.Payload["wallet_address"] != "")
 
 	ctx := context.Background()
 
-	// Wallet address is pre-injected by the coordinator via Capabilities.
-	walletAddress := input.Capabilities["wallet_address"]
+	// Wallet address is pre-injected by the coordinator via Payloads.
+	walletAddress := input.Payload["wallet_address"]
 
-	quoteURL, swapURL, executeURL := jupiterBaseURLs()
+	quoteURL, swapURL := jupiterBaseURLs()
 
-	// Phase 2: coordinator re-invoked us with a signed transaction in Payload.
-	if input.Payload != "" {
-		submitter := &jupiterSubmitTxTool{executeURL: executeURL}
-		txID, err := submitter.submit(ctx, input.Payload)
-		if err != nil {
-			writeError(fmt.Sprintf("submitting transaction: %v", err))
-			return
-		}
-		out, _ := json.Marshal(map[string]string{"txid": txID})
-		writeSuccess(out)
-		return
-	}
-
-	// Phase 1: get quote, build unsigned tx, request signing.
+	slog.Info("starting agent")
 	llm, err := newLLM(ctx)
 	if err != nil {
+		slog.Error("llm init failed", "error", err)
 		writeError(fmt.Sprintf("LLM initialisation failed: %v", err))
 		return
 	}
+	slog.Info("llm initialised")
 
 	limiter := newJupiterLimiter()
 	tools := []lctools.Tool{
@@ -263,26 +222,46 @@ func main() {
 	executor := agents.NewExecutor(agentInst)
 
 	prompt := input.Prompt
-	if len(input.Tasks) > 0 {
-		prompt = fmt.Sprintf("%s\nTasks:\n- %s", input.Prompt, strings.Join(input.Tasks, "\n- "))
+	if len(input.Payload) > 0 {
+		prompt += "\n\nPayloads:"
+		for k, v := range input.Payload {
+			prompt += fmt.Sprintf("\n- %s: %s", k, v)
+		}
 	}
 
+	slog.Info("agent starting", "prompt", prompt)
 	result, err := chains.Run(ctx, executor, prompt)
 	if err != nil {
 		const parsePrefix = "unable to parse agent output: "
 		if i := strings.Index(err.Error(), parsePrefix); i >= 0 {
 			extracted := err.Error()[i+len(parsePrefix):]
 			if strings.HasPrefix(extracted, "Thought:") {
+				slog.Error("agent failed", "error", err)
 				writeError(fmt.Sprintf("agent run failed: %v", err))
 				return
 			}
+			slog.Warn("agent parse error recovered", "extracted_len", len(extracted))
 			result = extracted
 		} else {
+			slog.Error("agent failed", "error", err)
 			writeError(fmt.Sprintf("agent run failed: %v", err))
 			return
 		}
 	}
 
+	// Check if the agent's Final Answer is a capability request JSON.
+	// The inner LLM may decide to request a coordinator capability (e.g.
+	// signing a transaction) instead of producing a text result.
+	var capReq CapabilityRequest
+	if err := json.Unmarshal([]byte(result), &capReq); err == nil &&
+		capReq.Capability != "" && capReq.Instruction != "" {
+		slog.Info("agent produced capability request", "capability", capReq.Capability, "action", capReq.Action)
+		payload, _ := json.Marshal(capReq)
+		writeRequest(payload)
+		return
+	}
+
+	slog.Info("agent completed")
 	out, _ := json.Marshal(result)
 	writeSuccess(out)
 }
@@ -358,7 +337,7 @@ func writeRequest(payload json.RawMessage) {
 
 func writeOutput(out ToolOutput) {
 	data, _ := json.Marshal(out)
-	if err := os.WriteFile(filepath.Join(os.Getenv("SOLAI_IPC_DIR"), "output.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(os.Getenv("SOLAI_IPC_DIR"), "output.json"), data, 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to write output.json: %v\n", err)
 	}
 }

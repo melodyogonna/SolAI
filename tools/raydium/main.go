@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -60,6 +61,7 @@ Returns: list of pools with TVL, 24h volume, APR (fee + reward), and farming sta
 }
 
 func (t *topPoolsTool) Call(ctx context.Context, input string) (string, error) {
+	slog.Info("tool call", "tool", t.Name(), "input", input)
 	input = strings.TrimSpace(stripMarkdownFence(input))
 
 	var apiURL string
@@ -93,6 +95,7 @@ Returns: matching pools with TVL, APR, volume, and farm details.`
 }
 
 func (t *searchPoolsTool) Call(ctx context.Context, input string) (string, error) {
+	slog.Info("tool call", "tool", t.Name(), "input", input)
 	input = strings.TrimSpace(stripMarkdownFence(input))
 	if input == "" {
 		return "", fmt.Errorf("search query is required")
@@ -119,11 +122,14 @@ func (t *searchPoolsTool) Call(ctx context.Context, input string) (string, error
 // ---- main -------------------------------------------------------------------
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+
 	ipcDir := os.Getenv("SOLAI_IPC_DIR")
 	if ipcDir == "" {
 		fmt.Fprintln(os.Stderr, "SOLAI_IPC_DIR is not set")
 		os.Exit(1)
 	}
+	slog.Info("tool starting", "ipc_dir", ipcDir)
 
 	data, err := os.ReadFile(filepath.Join(ipcDir, "input.json"))
 	if err != nil {
@@ -135,14 +141,17 @@ func main() {
 		writeError(fmt.Sprintf("failed to parse input: %v", err))
 		return
 	}
+	slog.Info("input received", "prompt", input.Prompt)
 
 	ctx := context.Background()
 
 	llm, err := newLLM(ctx)
 	if err != nil {
+		slog.Error("llm init failed", "error", err)
 		writeError(fmt.Sprintf("LLM initialisation failed: %v", err))
 		return
 	}
+	slog.Info("llm initialised")
 
 	tools := []lctools.Tool{
 		&topPoolsTool{},
@@ -155,10 +164,14 @@ func main() {
 	executor := agents.NewExecutor(agentInst)
 
 	prompt := input.Prompt
-	if len(input.Tasks) > 0 {
-		prompt = fmt.Sprintf("%s\nTasks:\n- %s", input.Prompt, strings.Join(input.Tasks, "\n- "))
+	if len(input.Payload) > 0 {
+		prompt += "\n\nPayloads:"
+		for k, v := range input.Payload {
+			prompt += fmt.Sprintf("\n- %s: %s", k, v)
+		}
 	}
 
+	slog.Info("agent starting", "prompt", prompt)
 	result, err := chains.Run(ctx, executor, prompt)
 	if err != nil {
 		const parsePrefix = "unable to parse agent output: "
@@ -167,16 +180,20 @@ func main() {
 			// If the extracted text is a raw ReAct trace the agent loop never
 			// completed — don't return it as a result.
 			if strings.HasPrefix(extracted, "Thought:") {
+				slog.Error("agent failed", "error", err)
 				writeError(fmt.Sprintf("agent run failed: %v", err))
 				return
 			}
+			slog.Warn("agent parse error recovered", "extracted_len", len(extracted))
 			result = extracted
 		} else {
+			slog.Error("agent failed", "error", err)
 			writeError(fmt.Sprintf("agent run failed: %v", err))
 			return
 		}
 	}
 
+	slog.Info("agent completed")
 	out, _ := json.Marshal(result)
 	writeSuccess(out)
 }
@@ -273,7 +290,7 @@ func writeError(msg string) {
 
 func writeOutput(out ToolOutput) {
 	data, _ := json.Marshal(out)
-	if err := os.WriteFile(filepath.Join(os.Getenv("SOLAI_IPC_DIR"), "output.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(os.Getenv("SOLAI_IPC_DIR"), "output.json"), data, 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to write output.json: %v\n", err)
 	}
 }

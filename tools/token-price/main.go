@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -67,6 +68,7 @@ Returns JSON with price_usd and change_24h_pct. Best for accurate prices of well
 }
 
 func (t *jupiterTool) Call(ctx context.Context, input string) (string, error) {
+	slog.Info("tool call", "tool", t.Name(), "input", input)
 	input = stripMarkdownFence(input)
 	mints := resolveToMints(parseTokenList(input))
 	if len(mints) == 0 {
@@ -100,6 +102,7 @@ Best for discovering tokens, finding new/unknown tokens, or market discovery.`
 }
 
 func (t *dexSearchTool) Call(ctx context.Context, input string) (string, error) {
+	slog.Info("tool call", "tool", t.Name(), "input", input)
 	input = strings.TrimSpace(stripMarkdownFence(input))
 	// If LLM passed JSON like {"query":"..."} or {"q":"..."}, extract the value.
 	var obj map[string]string
@@ -142,6 +145,7 @@ Best when you already have a mint address and need pool-level market detail.`
 }
 
 func (t *dexTokenTool) Call(ctx context.Context, input string) (string, error) {
+	slog.Info("tool call", "tool", t.Name(), "input", input)
 	parts := parseTokenList(stripMarkdownFence(input))
 	var addresses []string
 	for _, p := range parts {
@@ -173,11 +177,14 @@ func (t *dexTokenTool) Call(ctx context.Context, input string) (string, error) {
 // ---- main -------------------------------------------------------------------
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+
 	ipcDir := os.Getenv("SOLAI_IPC_DIR")
 	if ipcDir == "" {
 		fmt.Fprintln(os.Stderr, "SOLAI_IPC_DIR is not set")
 		os.Exit(1)
 	}
+	slog.Info("tool starting", "ipc_dir", ipcDir)
 
 	data, err := os.ReadFile(filepath.Join(ipcDir, "input.json"))
 	if err != nil {
@@ -189,14 +196,17 @@ func main() {
 		writeError(fmt.Sprintf("failed to parse input: %v", err))
 		return
 	}
+	slog.Info("input received", "prompt", input.Prompt)
 
 	ctx := context.Background()
 
 	llm, err := newLLM(ctx)
 	if err != nil {
+		slog.Error("llm init failed", "error", err)
 		writeError(fmt.Sprintf("LLM initialisation failed: %v", err))
 		return
 	}
+	slog.Info("llm initialised")
 
 	tools := []lctools.Tool{
 		&jupiterTool{limiter: newJupiterLimiter()},
@@ -210,10 +220,14 @@ func main() {
 	executor := agents.NewExecutor(agent)
 
 	prompt := input.Prompt
-	if len(input.Tasks) > 0 {
-		prompt = fmt.Sprintf("%s\nTasks:\n- %s", input.Prompt, strings.Join(input.Tasks, "\n- "))
+	if len(input.Payloads) > 0 {
+		prompt += "\n\nPayloads:"
+		for k, v := range input.Payloads {
+			prompt += fmt.Sprintf("\n- %s: %s", k, v)
+		}
 	}
 
+	slog.Info("agent starting", "prompt", prompt)
 	result, err := chains.Run(ctx, executor, prompt)
 	if err != nil {
 		// langchaingo's OneShotAgent wraps the raw LLM output in a parse error
@@ -223,16 +237,20 @@ func main() {
 		if i := strings.Index(err.Error(), parsePrefix); i >= 0 {
 			extracted := err.Error()[i+len(parsePrefix):]
 			if strings.HasPrefix(extracted, "Thought:") {
+				slog.Error("agent failed", "error", err)
 				writeError(fmt.Sprintf("agent run failed: %v", err))
 				return
 			}
+			slog.Warn("agent parse error recovered", "extracted_len", len(extracted))
 			result = extracted
 		} else {
+			slog.Error("agent failed", "error", err)
 			writeError(fmt.Sprintf("agent run failed: %v", err))
 			return
 		}
 	}
 
+	slog.Info("agent completed")
 	out, _ := json.Marshal(result)
 	writeSuccess(out)
 }

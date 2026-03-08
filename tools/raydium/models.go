@@ -3,12 +3,8 @@ package main
 import "encoding/json"
 
 type ToolInput struct {
-	Type         string            `json:"type"`
-	Prompt       string            `json:"prompt"`
-	Payload      string            `json:"payload,omitempty"`
-	Tasks        []string          `json:"tasks,omitempty"`
-	Capabilities map[string]string `json:"capabilities,omitempty"`
-	ErrorDetails string            `json:"error_details,omitempty"`
+	Prompt  string            `json:"prompt"`
+	Payload map[string]string `json:"payload,omitempty"`
 }
 
 type ToolOutput struct {
@@ -59,15 +55,15 @@ type PoolStats struct {
 
 // PoolSummary is the condensed view returned to the agent.
 type PoolSummary struct {
-	PoolID        string  `json:"pool_id"`
-	Type          string  `json:"type"`
-	TokenA        string  `json:"token_a"`
-	TokenB        string  `json:"token_b"`
-	Price         float64 `json:"price"`
-	TVLUSD        float64 `json:"tvl_usd"`
-	Volume24hUSD  float64 `json:"volume_24h_usd"`
-	APR24h        float64 `json:"apr_24h_pct"`
-	FeeAPR24h     float64 `json:"fee_apr_24h_pct"`
-	ActiveFarms   int     `json:"active_farms"`
-	FeeRate       float64 `json:"fee_rate_pct"`
+	PoolID       string  `json:"pool_id"`
+	Type         string  `json:"type"`
+	TokenA       string  `json:"token_a"`
+	TokenB       string  `json:"token_b"`
+	Price        float64 `json:"price"`
+	TVLUSD       float64 `json:"tvl_usd"`
+	Volume24hUSD float64 `json:"volume_24h_usd"`
+	APR24h       float64 `json:"apr_24h_pct"`
+	FeeAPR24h    float64 `json:"fee_apr_24h_pct"`
+	ActiveFarms  int     `json:"active_farms"`
+	FeeRate      float64 `json:"fee_rate_pct"`
 }

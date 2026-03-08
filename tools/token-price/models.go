@@ -3,12 +3,8 @@ package main
 import "encoding/json"
 
 type ToolInput struct {
-	Type         string            `json:"type"`
-	Prompt       string            `json:"prompt"`
-	Payload      string            `json:"payload,omitempty"`
-	Tasks        []string          `json:"tasks,omitempty"`
-	Capabilities map[string]string `json:"capabilities,omitempty"`
-	ErrorDetails string            `json:"error_details,omitempty"`
+	Prompt  string            `json:"prompt"`
+	Payload map[string]string `json:"payload,omitempty"`
 }
 
 type ToolOutput struct {
