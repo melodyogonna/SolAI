@@ -85,7 +85,7 @@ func runCycle(ctx context.Context, cfg Config, agentTools []lctools.Tool, prompt
 		if attempt > 1 {
 			slog.Info("retrying cycle", "attempt", attempt)
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
+		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		a := agents.NewOneShotAgent(
@@ -123,19 +123,24 @@ func (e *noRetryError) Error() string { return e.err.Error() }
 func buildCyclePrompt(cfg Config, capManager *capability.CapabilityManager, agenticTools []lctools.Tool) string {
 	var sections []string
 	var toolSection strings.Builder
-	toolSection.WriteString("## Available Tools\n")
+	var hasTools bool
 
 	if capSection := capManager.BuildCapabilityPromptSection(); capSection != "" {
-		toolSection.WriteString("\n### Built-in Capabilities\n")
+		toolSection.WriteString("## Available Tools\n\n### Built-in Capabilities\n")
 		toolSection.WriteString(capSection)
+		hasTools = true
 	}
 	if len(agenticTools) > 0 {
+		if !hasTools {
+			toolSection.WriteString("## Available Tools\n")
+		}
 		toolSection.WriteString("\n### Agentic Tools\n")
 		for _, t := range agenticTools {
 			fmt.Fprintf(&toolSection, "- **%s**: %s\n", t.Name(), t.Description())
 		}
+		hasTools = true
 	}
-	if toolSection.Len() > len("## Available Tools\n") {
+	if hasTools {
 		sections = append(sections, strings.TrimRight(toolSection.String(), "\n"))
 	}
 

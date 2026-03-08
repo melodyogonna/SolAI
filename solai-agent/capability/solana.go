@@ -178,14 +178,7 @@ func (s *SolanaCapability) transferSOL(ctx context.Context, toAddr string, lampo
 		return "", fmt.Errorf("solana: building transaction: %w", err)
 	}
 
-	privKey := solana.PrivateKey(s.keypair.PrivateKeyBytes())
-	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
-		if key.Equals(fromPubkey) {
-			return &privKey
-		}
-		return nil
-	})
-	if err != nil {
+	if err := s.signTx(tx, fromPubkey); err != nil {
 		return "", fmt.Errorf("solana: signing transaction: %w", err)
 	}
 
@@ -204,6 +197,20 @@ func (s *SolanaCapability) transferSOL(ctx context.Context, toAddr string, lampo
 		"to":        toAddr,
 	})
 	return string(out), nil
+}
+
+// signTx adds the agent's ed25519 signature to tx for the wallet's public key.
+// Slots belonging to other signers are left untouched (nil return preserves
+// existing signatures, important for protocols like Jupiter that pre-sign).
+func (s *SolanaCapability) signTx(tx *solana.Transaction, signer solana.PublicKey) error {
+	privKey := solana.PrivateKey(s.keypair.PrivateKeyBytes())
+	_, err := tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+		if key.Equals(signer) {
+			return &privKey
+		}
+		return nil
+	})
+	return err
 }
 
 // sendTransaction deserializes a base64-encoded pre-built Solana transaction,
@@ -229,17 +236,7 @@ func (s *SolanaCapability) sendTransaction(ctx context.Context, txBase64 string)
 		return "", fmt.Errorf("solana: invalid public key: %w", err)
 	}
 
-	privKey := solana.PrivateKey(s.keypair.PrivateKeyBytes())
-	// Sign only our slot; returning nil for any other signer leaves their
-	// existing signature in place (important for protocols like Jupiter that
-	// pre-sign the transaction before returning it).
-	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
-		if key.Equals(fromPubkey) {
-			return &privKey
-		}
-		return nil
-	})
-	if err != nil {
+	if err := s.signTx(tx, fromPubkey); err != nil {
 		return "", fmt.Errorf("solana: signing transaction: %w", err)
 	}
 

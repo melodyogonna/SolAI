@@ -88,6 +88,9 @@ func IsInstalled(name, toolsDir string) bool {
 // installFromIndex resolves a short tool name via the hosted registry index and installs it.
 func installFromIndex(ref, toolsDir string) error {
 	name, tag := parseShortRef(ref)
+	if name == "" {
+		return fmt.Errorf("tool name is empty")
+	}
 
 	if IsInstalled(name, toolsDir) {
 		return fmt.Errorf("tool %q is already installed (run: solai uninstall %s to remove it first)", name, name)
@@ -129,9 +132,6 @@ func installFromIndex(ref, toolsDir string) error {
 	var m manifestHeader
 	if err := json.Unmarshal(manifestData, &m); err != nil {
 		return fmt.Errorf("parsing manifest.json: %w", err)
-	}
-	if name == "" {
-		return fmt.Errorf("requested tool name is empty")
 	}
 	if m.Name != name {
 		return fmt.Errorf("manifest name %q does not match requested tool %q", m.Name, name)
@@ -353,6 +353,9 @@ func validateManifest(m manifestHeader) error {
 	}
 	if m.Description == "" {
 		return fmt.Errorf("manifest %q missing required field: description", m.Name)
+	}
+	if m.Version == "" {
+		return fmt.Errorf("manifest %q missing required field: version", m.Name)
 	}
 	if m.Executable == "" {
 		return fmt.Errorf("manifest %q missing required field: executable", m.Name)

@@ -80,7 +80,6 @@ func (t *AgenticTool) Description() string {
 // Call implements tools.Tool. It is invoked by langchaingo when the LLM selects
 // this tool during the ReAct loop.
 func (t *AgenticTool) Call(ctx context.Context, input string) (string, error) {
-	fmt.Println(input)
 	taskInput := parseTaskInput(input)
 
 	// Append requestable capabilities so the inner tool LLM can generate

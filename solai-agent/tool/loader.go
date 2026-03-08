@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/melodyogonna/solai/solai-agent/capability"
 	solaiconfig "github.com/melodyogonna/solai/solai-agent/config"
@@ -91,7 +90,7 @@ func LoadTools(toolsDir string, provider *capability.LLMProvider, capManager *ca
 			if llmCfg == nil {
 				warnings = append(warnings, fmt.Errorf(
 					"tool %q disabled: no supported LLM provider configured (needs one of: %s)",
-					manifest.Name, joinProviders(opts.Supported)))
+					manifest.Name, capability.SupportedProviderList(supported)))
 				continue
 			}
 		}
@@ -184,18 +183,4 @@ func resolveToolEnv(manifest Manifest, cfg *solaiconfig.SolaiConfig) ([]string, 
 		}
 	}
 	return env, nil
-}
-
-// joinProviders formats a ManifestLLMModel slice as a readable list of
-// "model (provider)" entries for use in warning messages.
-func joinProviders(models []ManifestLLMModel) string {
-	parts := make([]string, 0, len(models))
-	seen := make(map[string]bool)
-	for _, m := range models {
-		if !seen[m.Provider] {
-			seen[m.Provider] = true
-			parts = append(parts, fmt.Sprintf("%s (%s)", m.Model, m.Provider))
-		}
-	}
-	return strings.Join(parts, ", ")
 }

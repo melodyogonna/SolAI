@@ -2,8 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/melodyogonna/solai/solai-agent/capability"
@@ -17,7 +15,7 @@ import (
 // Config holds all runtime configuration for the agent.
 // It is built once in main.go and passed into Run.
 type Config struct {
-	// LLM is the initialized language model. Set by main.go after LoadConfig returns.
+	// LLM is the initialized language model. Assigned by the caller after LoadConfigFrom returns.
 	LLM llms.Model
 
 	// SystemPrompt is the content of the SYSTEM_PROMPT file, loaded at startup.
@@ -43,68 +41,6 @@ type Config struct {
 
 	// SystemManager owns tool loading, LLM provider logging, and cleanup job scheduling.
 	SystemManager *capability.SystemManager
-}
-
-// LoadConfig reads all configuration from environment variables.
-// Returns an error if any required variable is missing or a required file cannot be read.
-//
-// Required env vars: API_KEY, SYSTEM_PROMPT, USER_PROMPT, TOOLS_DIR
-// Optional env vars: WALLET_SEED (empty → generate new wallet), CYCLE_TIMEOUT (default: 5m)
-//
-// Note: LoadConfig does not initialize the LLM or set Config.LLM. The caller (main.go)
-// is responsible for constructing the LLM with the API_KEY and assigning it.
-func LoadConfig() (Config, error) {
-	apiKey := os.Getenv("API_KEY")
-	if apiKey == "" {
-		return Config{}, fmt.Errorf("API_KEY environment variable is required")
-	}
-
-	systemPromptPath := os.Getenv("SYSTEM_PROMPT")
-	if systemPromptPath == "" {
-		return Config{}, fmt.Errorf("SYSTEM_PROMPT environment variable is required")
-	}
-	systemPrompt, err := loadFile(systemPromptPath)
-	if err != nil {
-		return Config{}, fmt.Errorf("loading system prompt: %w", err)
-	}
-
-	userPromptPath := os.Getenv("USER_PROMPT")
-	if userPromptPath == "" {
-		return Config{}, fmt.Errorf("USER_PROMPT environment variable is required")
-	}
-	userGoals, err := loadFile(userPromptPath)
-	if err != nil {
-		return Config{}, fmt.Errorf("loading user goals: %w", err)
-	}
-
-	toolsDir := os.Getenv("TOOLS_DIR")
-	if toolsDir == "" {
-		return Config{}, fmt.Errorf("TOOLS_DIR environment variable is required")
-	}
-
-	seedPhrase := os.Getenv("WALLET_SEED")
-	kp, err := wallet.CreateWallet(seedPhrase)
-	if err != nil {
-		return Config{}, fmt.Errorf("creating wallet: %w", err)
-	}
-
-	cycleInterval := parseDuration(os.Getenv("CYCLE_TIMEOUT"), 5*time.Minute)
-
-	llmProvider := capability.NewLLMProvider()
-	loader := func(bwrapPath string, capManager *capability.CapabilityManager) ([]lctools.Tool, []error, error) {
-		return tool.LoadTools(toolsDir, llmProvider, capManager, bwrapPath, nil)
-	}
-	systemManager := capability.NewSystemManager(loader, llmProvider)
-
-	return Config{
-		SystemPrompt:  systemPrompt,
-		UserGoals:     userGoals,
-		ToolsDir:      toolsDir,
-		Wallet:        &kp,
-		CycleTimeout: cycleInterval,
-		LLMProvider:   llmProvider,
-		SystemManager: systemManager,
-	}, nil
 }
 
 // LoadConfigFrom builds an agent Config from a SolaiConfig (from ~/.solai/config.json).
@@ -143,15 +79,6 @@ func LoadConfigFrom(cfg *solaiconfig.SolaiConfig, toolsDir, systemPrompt string)
 		LLMProvider:   llmProvider,
 		SystemManager: systemManager,
 	}, nil
-}
-
-// loadFile reads the full content of a file and returns it as a trimmed string.
-func loadFile(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("reading file %s: %w", path, err)
-	}
-	return strings.TrimSpace(string(data)), nil
 }
 
 // parseDuration parses a Go duration string. Returns defaultVal if the string

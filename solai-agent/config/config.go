@@ -125,24 +125,15 @@ func (c *SolaiConfig) Save() error {
 
 // Set updates a single configuration value by dot-notation key.
 //
-// Supported keys: model.provider, model.name,
-// provider.google, provider.openai, provider.anthropic,
-// wallet-seed, cycle-timeout, user-goals, sandbox.share-net.
+// Supported keys: model.provider, model.name, provider.<name>,
+// wallet-seed, cycle-timeout, user-goals, sandbox.share-net,
+// solana.rpc-url, solana.commitment, tool-env.<tool>.<VAR>.
 func (c *SolaiConfig) Set(key, value string) error {
 	switch key {
 	case "model.provider":
 		c.Model.Provider = value
 	case "model.name":
 		c.Model.Name = value
-	case "provider.google":
-		c.ensureProviders()
-		c.Providers["google"] = value
-	case "provider.openai":
-		c.ensureProviders()
-		c.Providers["openai"] = value
-	case "provider.anthropic":
-		c.ensureProviders()
-		c.Providers["anthropic"] = value
 	case "wallet-seed":
 		c.WalletSeed = value
 	case "cycle-timeout":
@@ -168,7 +159,11 @@ func (c *SolaiConfig) Set(key, value string) error {
 			return fmt.Errorf("solana.commitment: expected finalized/confirmed/processed, got %q", value)
 		}
 	default:
-		// Dynamic key: tool-env.<toolname>.<VAR_NAME>
+		if provider, ok := strings.CutPrefix(key, "provider."); ok {
+			c.ensureProviders()
+			c.Providers[provider] = value
+			return nil
+		}
 		if rest, ok := strings.CutPrefix(key, "tool-env."); ok {
 			dot := strings.IndexByte(rest, '.')
 			if dot < 1 || dot == len(rest)-1 {
@@ -179,7 +174,7 @@ func (c *SolaiConfig) Set(key, value string) error {
 			c.ToolEnv[toolName][varName] = value
 			return nil
 		}
-		return fmt.Errorf("unknown config key %q; valid keys: model.provider, model.name, provider.google, provider.openai, provider.anthropic, wallet-seed, cycle-timeout, user-goals, sandbox.share-net, solana.rpc-url, solana.commitment, tool-env.<tool>.<VAR>", key)
+		return fmt.Errorf("unknown config key %q; valid keys: model.provider, model.name, provider.<name>, wallet-seed, cycle-timeout, user-goals, sandbox.share-net, solana.rpc-url, solana.commitment, tool-env.<tool>.<VAR>", key)
 	}
 	return nil
 }
@@ -191,12 +186,6 @@ func (c *SolaiConfig) Get(key string) (string, error) {
 		return c.Model.Provider, nil
 	case "model.name":
 		return c.Model.Name, nil
-	case "provider.google":
-		return c.Providers["google"], nil
-	case "provider.openai":
-		return c.Providers["openai"], nil
-	case "provider.anthropic":
-		return c.Providers["anthropic"], nil
 	case "wallet-seed":
 		return c.WalletSeed, nil
 	case "cycle-timeout":
@@ -213,6 +202,9 @@ func (c *SolaiConfig) Get(key string) (string, error) {
 	case "solana.commitment":
 		return c.Solana.Commitment, nil
 	default:
+		if provider, ok := strings.CutPrefix(key, "provider."); ok {
+			return c.Providers[provider], nil
+		}
 		if rest, ok := strings.CutPrefix(key, "tool-env."); ok {
 			dot := strings.IndexByte(rest, '.')
 			if dot < 1 || dot == len(rest)-1 {
