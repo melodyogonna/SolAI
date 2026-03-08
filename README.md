@@ -1,10 +1,20 @@
 # Solana AI
 
+> **Early development** — SolAI is experimental software. Expect breaking changes, missing features, and rough edges. Do not run it with a wallet holding funds you cannot afford to lose.
+
 An autonomous AI agent for the Solana blockchain. SolAI runs a continuous reasoning loop powered by a user-configured LLM (Google, OpenAI, or Anthropic), coordinating a suite of external tools to accomplish user-defined goals — monitoring token prices, reading on-chain data, executing transactions, or anything else a tool can be built to do.
 
 ---
 
 ## Installation
+
+### System requirements
+
+- **OS:** Linux (x86\_64 or aarch64)
+- **Kernel:** 5.x or later — required for nested unprivileged user namespaces used by the tool sandbox
+- **Internet access:** required to reach the LLM provider API and any tools that call external services
+
+### Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/melodyogonna/solai/main/install.sh | bash
