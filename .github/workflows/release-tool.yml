@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 2
+          fetch-depth: 1
 
       - uses: actions/setup-go@v5
         with:
@@ -30,8 +30,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          git diff --name-only HEAD^ HEAD -- 'tools/*/manifest.json' | while read -r manifest; do
-            [ -z "$manifest" ] && continue
+          for manifest in tools/*/manifest.json; do
+            [ -f "$manifest" ] || continue
 
             tool=$(echo "$manifest" | cut -d/ -f2)
             version=$(jq -r '.version' "$manifest")
