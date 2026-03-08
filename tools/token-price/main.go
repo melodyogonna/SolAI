@@ -220,9 +220,9 @@ func main() {
 	executor := agents.NewExecutor(agent)
 
 	prompt := input.Prompt
-	if len(input.Payloads) > 0 {
+	if len(input.Payload) > 0 {
 		prompt += "\n\nPayloads:"
-		for k, v := range input.Payloads {
+		for k, v := range input.Payload {
 			prompt += fmt.Sprintf("\n- %s: %s", k, v)
 		}
 	}
