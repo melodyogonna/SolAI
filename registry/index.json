@@ -4,7 +4,7 @@
     "jupiter-swap": {
       "description": "Quotes and builds Solana token swap transactions using the Jupiter aggregator. Requests the user's wallet address from the coordinator, fetches the best route and quote, then returns both the quote details and a serialized transaction for the coordinator to sign and submit via the Solana capability.",
       "maintainer": "melodyogonna/SolAI",
-      "latest": "v0.3.1",
+      "latest": "v0.3.2",
       "versions": {
         "v0.1.1": {
           "manifest": "https://github.com/melodyogonna/SolAI/releases/download/jupiter-swap%2Fv0.1.1/manifest.json",
@@ -37,13 +37,21 @@
             "linux/amd64": "https://github.com/melodyogonna/SolAI/releases/download/jupiter-swap%2Fv0.3.1/jupiter-swap-linux-amd64",
             "linux/arm64": "https://github.com/melodyogonna/SolAI/releases/download/jupiter-swap%2Fv0.3.1/jupiter-swap-linux-arm64"
           }
+        },
+        "v0.3.2": {
+          "manifest": "https://github.com/melodyogonna/SolAI/releases/download/jupiter-swap%2Fv0.3.2/manifest.json",
+          "checksums": "https://github.com/melodyogonna/SolAI/releases/download/jupiter-swap%2Fv0.3.2/checksums.txt",
+          "assets": {
+            "linux/amd64": "https://github.com/melodyogonna/SolAI/releases/download/jupiter-swap%2Fv0.3.2/jupiter-swap-linux-amd64",
+            "linux/arm64": "https://github.com/melodyogonna/SolAI/releases/download/jupiter-swap%2Fv0.3.2/jupiter-swap-linux-arm64"
+          }
         }
       }
     },
     "raydium": {
       "description": "Fetches Raydium DEX data: liquidity pools, farming opportunities, APY, TVL, and trading volumes for Solana token pairs. Use this to discover yield opportunities, analyse pool liquidity, or compare farming rewards across Raydium pools.",
       "maintainer": "melodyogonna/SolAI",
-      "latest": "v0.3.1",
+      "latest": "v0.3.2",
       "versions": {
         "v0.1.1": {
           "manifest": "https://github.com/melodyogonna/SolAI/releases/download/raydium%2Fv0.1.1/manifest.json",
@@ -67,6 +75,14 @@
           "assets": {
             "linux/amd64": "https://github.com/melodyogonna/SolAI/releases/download/raydium%2Fv0.3.1/raydium-linux-amd64",
             "linux/arm64": "https://github.com/melodyogonna/SolAI/releases/download/raydium%2Fv0.3.1/raydium-linux-arm64"
+          }
+        },
+        "v0.3.2": {
+          "manifest": "https://github.com/melodyogonna/SolAI/releases/download/raydium%2Fv0.3.2/manifest.json",
+          "checksums": "https://github.com/melodyogonna/SolAI/releases/download/raydium%2Fv0.3.2/checksums.txt",
+          "assets": {
+            "linux/amd64": "https://github.com/melodyogonna/SolAI/releases/download/raydium%2Fv0.3.2/raydium-linux-amd64",
+            "linux/arm64": "https://github.com/melodyogonna/SolAI/releases/download/raydium%2Fv0.3.2/raydium-linux-arm64"
           }
         }
       }
