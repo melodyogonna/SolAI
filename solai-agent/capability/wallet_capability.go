@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/melodyogonna/solai/solai-agent/wallet"
 )
@@ -57,9 +58,11 @@ func (w *WalletCapability) Execute(_ context.Context, input string) (string, err
 		Input  string `json:"input"`
 	}
 	if err := json.Unmarshal([]byte(input), &req); err != nil || req.Action == "" {
-		// Plain LLM call — return the public address.
+		slog.Debug("capability called", "capability", "wallet", "action", "address")
 		return w.keypair.Base58PubKey(), nil
 	}
+
+	slog.Debug("capability called", "capability", "wallet", "action", req.Action)
 
 	switch req.Action {
 	case "address":

@@ -3,6 +3,7 @@ package capability
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"sync"
 )
@@ -67,6 +68,8 @@ func (m *MemoryCapability) Execute(_ context.Context, input string) (string, err
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	slog.Debug("capability called", "capability", "memory", "action", in.Action)
 
 	switch in.Action {
 	case "update_plan":

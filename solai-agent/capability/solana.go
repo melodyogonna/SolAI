@@ -97,6 +97,7 @@ func (s *SolanaCapability) Execute(ctx context.Context, input string) (string, e
 	if err := json.Unmarshal([]byte(input), &req); err != nil {
 		return "", fmt.Errorf("solana: invalid input JSON: %w", err)
 	}
+	slog.Debug("capability called", "capability", "solana", "action", req.Action)
 	switch req.Action {
 	case "get_balance":
 		return s.getBalance(ctx)
