@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/melodyogonna/solai/solai-agent/agent"
@@ -54,10 +55,26 @@ func runAgentRunCmd(cmd *cobra.Command, args []string) error {
 	return agentRun(cmd.Context(), cfg, toolsDir)
 }
 
+// initLogger configures the global slog logger. The level is controlled by the
+// SOLAI_LOG_LEVEL env var (debug, info, warn, error; default: info).
+func initLogger() {
+	level := slog.LevelInfo
+	switch strings.ToLower(os.Getenv("SOLAI_LOG_LEVEL")) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+}
+
 // agentRun initializes and runs the autonomous agent loop.
 // It is called by the __agent-run subcommand (inside bwrap) and by
 // "solai start --no-sandbox" (directly on the host).
 func agentRun(ctx context.Context, cfg *solaiconfig.SolaiConfig, toolsDir string) error {
+	initLogger()
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

@@ -40,6 +40,21 @@ type EnvVar struct {
 	Required bool `json:"required"`
 }
 
+// ManifestPayload declares a named payload entry a tool uses.
+type ManifestPayload struct {
+	// Name is the payload key (e.g. "wallet_address").
+	Name string `json:"name"`
+
+	// Description is shown in the tool's Description() so the coordinator LLM
+	// knows what the payload contains.
+	Description string `json:"description"`
+
+	// Source is a capability name whose Execute() result is auto-injected by
+	// the coordinator at load time (e.g. "wallet"). Empty means the value is
+	// provided via capability request fulfillment on re-invocation.
+	Source string `json:"source,omitempty"`
+}
+
 // Manifest represents the contents of a tool's manifest.json file.
 // Every agentic tool directory must contain one.
 type Manifest struct {
@@ -72,6 +87,11 @@ type Manifest struct {
 	// tool invocation may run before it is killed. Defaults to DefaultToolTimeout
 	// when absent or unparseable.
 	Timeout string `json:"timeout,omitempty"`
+
+	// Payloads declares named payload values the tool accepts. Entries with a
+	// Source field are auto-injected by the coordinator; others are provided
+	// by the coordinator LLM in response to capability requests.
+	Payloads []ManifestPayload `json:"payloads,omitempty"`
 
 	// Env declares environment variables the tool needs at runtime.
 	// Values are sourced from the agent config (tool-env.<name>.<VAR>).

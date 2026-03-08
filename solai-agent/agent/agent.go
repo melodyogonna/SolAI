@@ -49,6 +49,7 @@ func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManag
 
 	windowMem := memory.NewConversationWindowBuffer(3)
 
+	var cycleNum int
 	for {
 		select {
 		case <-ctx.Done():
@@ -57,16 +58,18 @@ func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManag
 		default:
 		}
 
-		slog.Info("starting agent cycle")
+		cycleNum++
+		slog.Info("starting agent cycle", "cycle", cycleNum)
 		cycleCtx, cancel := context.WithTimeout(ctx, cfg.CycleTimeout)
 		cyclePrompt := buildCyclePrompt(cfg, capManager, cfg.SystemManager.GetTools())
+		slog.Debug("cycle prompt", "cycle", cycleNum, "prompt", cyclePrompt)
 		answer, err := runCycle(cycleCtx, cfg, agentTools, cyclePrompt, windowMem)
 		cancel()
 
 		if err != nil {
-			handleCycleError(err)
+			handleCycleError(cycleNum, err)
 		} else {
-			slog.Info("cycle complete", "answer", answer)
+			slog.Info("cycle complete", "cycle", cycleNum, "answer", answer)
 		}
 	}
 }
@@ -76,7 +79,12 @@ func Run(ctx context.Context, cfg Config, capManager *capability.CapabilityManag
 // Non-transient errors (ErrNotFinished, context cancellation/timeout) are not retried.
 func runCycle(ctx context.Context, cfg Config, agentTools []lctools.Tool, prompt string, mem schema.Memory) (string, error) {
 	var answer string
+	attempt := 0
 	err := cycleRetry.Execute(ctx, func(ctx context.Context) error {
+		attempt++
+		if attempt > 1 {
+			slog.Info("retrying cycle", "attempt", attempt)
+		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
 			return ctx.Err()
 		}
@@ -113,18 +121,22 @@ func (e *noRetryError) Error() string { return e.err.Error() }
 // It also injects any MemorySectionProvider sections (e.g. MemoryCapability).
 // This is the "Question" the ReAct agent receives; the system prompt is the "Prefix".
 func buildCyclePrompt(cfg Config, capManager *capability.CapabilityManager, agenticTools []lctools.Tool) string {
-	var toolLines []string
+	var sections []string
+	var toolSection strings.Builder
+	toolSection.WriteString("## Available Tools\n")
 
 	if capSection := capManager.BuildCapabilityPromptSection(); capSection != "" {
-		toolLines = append(toolLines, capSection)
+		toolSection.WriteString("\n### Built-in Capabilities\n")
+		toolSection.WriteString(capSection)
 	}
-	for _, t := range agenticTools {
-		toolLines = append(toolLines, fmt.Sprintf("- **%s**: %s", t.Name(), t.Description()))
+	if len(agenticTools) > 0 {
+		toolSection.WriteString("\n### Agentic Tools\n")
+		for _, t := range agenticTools {
+			fmt.Fprintf(&toolSection, "- **%s**: %s\n", t.Name(), t.Description())
+		}
 	}
-
-	var sections []string
-	if len(toolLines) > 0 {
-		sections = append(sections, "## Available Tools\n"+strings.Join(toolLines, "\n"))
+	if toolSection.Len() > len("## Available Tools\n") {
+		sections = append(sections, strings.TrimRight(toolSection.String(), "\n"))
 	}
 
 	for _, c := range capManager.GetAll() {
@@ -141,13 +153,13 @@ func buildCyclePrompt(cfg Config, capManager *capability.CapabilityManager, agen
 
 // handleCycleError logs cycle errors with appropriate severity.
 // The agent loop always continues after an error — it never crashes.
-func handleCycleError(err error) {
+func handleCycleError(cycleNum int, err error) {
 	switch {
 	case errors.Is(err, agents.ErrNotFinished):
-		slog.Warn("cycle did not finish within max iterations — tools may be insufficient for the specified goals")
+		slog.Warn("cycle did not finish within max iterations — tools may be insufficient for the specified goals", "cycle", cycleNum)
 	case errors.Is(err, context.DeadlineExceeded):
-		slog.Warn("cycle timed out")
+		slog.Warn("cycle timed out", "cycle", cycleNum)
 	default:
-		slog.Error("unexpected cycle error", "err", err)
+		slog.Error("unexpected cycle error", "cycle", cycleNum, "err", err)
 	}
 }

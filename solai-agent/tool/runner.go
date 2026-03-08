@@ -16,27 +16,13 @@ import (
 // ToolInput is the JSON structure written to input.json in the IPC directory
 // before starting a tool.
 type ToolInput struct {
-	// Type is always "input".
-	Type string `json:"type"`
-
 	// Prompt describes what to do. Always present.
 	Prompt string `json:"prompt"`
 
-	// Payload carries raw data on re-invocation (e.g. a base64-encoded signed
-	// transaction returned by a capability). Empty on the initial invocation.
-	Payload string `json:"payload,omitempty"`
-
-	// Tasks is a list of discrete sub-tasks for the tool to accomplish, in order.
-	// May be empty on re-invocation.
-	Tasks []string `json:"tasks,omitempty"`
-
-	// Capabilities holds pre-injected capability values for the tool.
-	// Currently contains "wallet_address" when the wallet capability is active.
-	Capabilities map[string]string `json:"capabilities,omitempty"`
-
-	// ErrorDetails is non-empty when the re-invocation follows a failed
-	// capability request; it carries the error message from that failure.
-	ErrorDetails string `json:"error_details,omitempty"`
+	// Payloads holds named data values available to the tool. Auto-injected
+	// values (e.g. "wallet_address") are merged in by the coordinator at
+	// construction time; additional values may arrive on re-invocation.
+	Payload map[string]string `json:"payload,omitempty"`
 }
 
 // ToolOutput is the JSON structure read from output.json after the tool exits.
@@ -155,7 +141,7 @@ func RunTool(ctx context.Context, dir, executable string, input ToolInput, timeo
 	if err != nil {
 		return ToolOutput{}, fmt.Errorf("marshalling tool input: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(policy.IPCDir, "input.json"), inputJSON, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(policy.IPCDir, "input.json"), inputJSON, 0o600); err != nil {
 		return ToolOutput{}, fmt.Errorf("writing input.json: %w", err)
 	}
 
@@ -188,18 +174,23 @@ func RunTool(ctx context.Context, dir, executable string, input ToolInput, timeo
 	if err := cmd.Start(); err != nil {
 		return ToolOutput{}, fmt.Errorf("starting tool: %w", err)
 	}
+	slog.Debug("tool process started", "executable", executable, "pid", cmd.Process.Pid)
 
 	waitErr := cmd.Wait()
+	if stderrStr := strings.TrimSpace(stderrBuf.String()); stderrStr != "" {
+		slog.Debug("tool stderr", "executable", executable, "stderr", stderrStr)
+	}
 	if waitErr != nil {
 		if ctx.Err() != nil {
 			return ToolOutput{}, ctx.Err()
 		}
-		stderrStr := stderrBuf.String()
+		stderrStr := strings.TrimSpace(stderrBuf.String())
 		if stderrStr != "" {
 			return ToolOutput{}, fmt.Errorf("tool process failed: %w\nstderr: %s", waitErr, stderrStr)
 		}
 		return ToolOutput{}, fmt.Errorf("tool process failed: %w", waitErr)
 	}
+	slog.Debug("tool process exited", "executable", executable)
 
 	data, err := os.ReadFile(filepath.Join(policy.IPCDir, "output.json"))
 	if err != nil {
@@ -222,8 +213,5 @@ func parseTaskInput(input string) ToolInput {
 	if err := json.Unmarshal([]byte(input), &ti); err == nil && ti.Prompt != "" {
 		return ti
 	}
-	return ToolInput{
-		Prompt: input,
-		Tasks:  []string{input},
-	}
+	return ToolInput{Prompt: input}
 }

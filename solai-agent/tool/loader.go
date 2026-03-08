@@ -49,13 +49,8 @@ func LoadTools(toolsDir string, provider *capability.LLMProvider, capManager *ca
 		commCap = capability.NewCommunicationCapability()
 	}
 
-	// Pre-resolve the wallet address to inject into tool inputs.
-	var walletAddress string
-	if wc := capManager.GetByName("wallet"); wc != nil {
-		if addr, err := wc.Execute(context.Background(), ""); err == nil {
-			walletAddress = addr
-		}
-	}
+	// Build the capability section once; it's the same for all tools in this agent.
+	capabilitySection := capManager.BuildToolRequestSection()
 
 	var loaded []tools.Tool
 	var warnings []error
@@ -115,10 +110,34 @@ func LoadTools(toolsDir string, provider *capability.LLMProvider, capManager *ca
 			continue
 		}
 
-		loaded = append(loaded, NewAgenticTool(manifest, toolDir, llmCfg, policy, toolEnv, commCap, walletAddress))
+		autoPayloads := resolveAutoPayloads(manifest, capManager)
+		loaded = append(loaded, NewAgenticTool(manifest, toolDir, llmCfg, policy, toolEnv, commCap, autoPayloads, capabilitySection))
 	}
 
 	return loaded, warnings, nil
+}
+
+// resolveAutoPayloads resolves all manifest payload entries that have a Source
+// field by calling the named capability's Execute method. Returns nil if no
+// auto-payloads are declared or none can be resolved.
+func resolveAutoPayloads(manifest Manifest, capManager *capability.CapabilityManager) map[string]string {
+	result := make(map[string]string)
+	for _, p := range manifest.Payloads {
+		if p.Source == "" {
+			continue
+		}
+		cap := capManager.GetByName(p.Source)
+		if cap == nil {
+			continue
+		}
+		if val, err := cap.Execute(context.Background(), ""); err == nil && val != "" {
+			result[p.Name] = val
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 // buildSandboxPolicy resolves the SandboxPolicy for a tool from its manifest.

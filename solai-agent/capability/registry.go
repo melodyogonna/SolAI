@@ -109,6 +109,31 @@ func (m *CapabilityManager) GetByName(name string) Capability {
 	return nil
 }
 
+// BuildToolRequestSection generates a documentation block for all Regular
+// capabilities that expose ToolRequestDescription. This is injected into
+// agentic tool prompts so inner LLMs know what capabilities they can request
+// from the coordinator, and the exact request format.
+func (m *CapabilityManager) BuildToolRequestSection() string {
+	var parts []string
+	for _, c := range m.capabilities {
+		if c.Class() == Regular {
+			if desc := c.ToolRequestDescription(); desc != "" {
+				parts = append(parts, fmt.Sprintf("- **%s**: %s", c.Name(), desc))
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	header := "## Requestable Capabilities\n\n" +
+		"If you need coordinator help (e.g. signing a transaction), output a JSON object " +
+		"as your Final Answer instead of a text result:\n" +
+		"{\"capability\":\"<name>\",\"action\":\"<action>\",\"input\":\"<data>\"," +
+		"\"instruction\":\"<tell the coordinator what to do after, e.g. re-invoke this tool with the result>\"}\n\n" +
+		"Available:\n"
+	return header + strings.Join(parts, "\n")
+}
+
 // BuildCapabilityPromptSection generates a Markdown block describing all
 // Internal and Regular capabilities for injection into the coordinator's
 // per-cycle prompt. Capabilities with an empty Description are omitted.

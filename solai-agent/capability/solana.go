@@ -16,11 +16,11 @@ import (
 )
 
 const (
-	defaultSolanaRPC    = "https://api.mainnet-beta.solana.com"
-	defaultCommitment   = "confirmed"
+	defaultSolanaRPC  = "https://api.mainnet-beta.solana.com"
+	defaultCommitment = "confirmed"
 )
 
-// SolanaCapability is an Internal capability that allows the agent to interact
+// SolanaCapability is a Regular capability that allows the agent to interact
 // with the Solana blockchain: querying balances, fetching blockhashes, and
 // submitting signed transactions.
 type SolanaCapability struct {
@@ -53,10 +53,16 @@ func NewSolanaCapability(kp *wallet.SolKeyPair, rpcURL, commitment string) *Sola
 
 func (s *SolanaCapability) Name() string { return "solana" }
 
-func (s *SolanaCapability) Class() CapabilityClass { return Internal }
+func (s *SolanaCapability) Class() CapabilityClass { return Regular }
 
-// ToolRequestDescription implements Capability. Solana is Internal — not requestable by tools.
-func (s *SolanaCapability) ToolRequestDescription() string { return "" }
+// ToolRequestDescription describes the actions agentic tools can request from
+// the coordinator via the capability request protocol.
+func (s *SolanaCapability) ToolRequestDescription() string {
+	return "Signs and submits Solana transactions on behalf of the agent wallet.\n" +
+		"  action: send_transaction — adds the agent's signature to a pre-built transaction and submits it to the network\n" +
+		"  input: base64-encoded unsigned Solana transaction (as returned by Jupiter /swap or similar)\n" +
+		"  returns: {\"signature\":\"<base58_txid>\"}"
+}
 
 // Description is injected into each cycle prompt so the LLM knows how to use
 // the Solana capability.
@@ -78,10 +84,11 @@ func (s *SolanaCapability) Description() string {
 // solanaInput is the JSON structure the LLM sends to Execute.
 type solanaInput struct {
 	Action      string `json:"action"`
-	Address     string `json:"address,omitempty"`   // base58 account address
+	Address     string `json:"address,omitempty"` // base58 account address
 	To          string `json:"to,omitempty"`
 	Lamports    uint64 `json:"lamports,omitempty"`
 	Transaction string `json:"transaction,omitempty"` // base64-encoded serialized transaction
+	Input       string `json:"input,omitempty"`       // alias for Transaction; used in capability request dispatch
 }
 
 // Execute dispatches a Solana action based on the JSON input string.
@@ -98,7 +105,11 @@ func (s *SolanaCapability) Execute(ctx context.Context, input string) (string, e
 	case "get_recent_blockhash":
 		return s.getRecentBlockhash(ctx)
 	case "send_transaction":
-		return s.sendTransaction(ctx, req.Transaction)
+		tx := req.Transaction
+		if tx == "" {
+			tx = req.Input
+		}
+		return s.sendTransaction(ctx, tx)
 	case "get_account_info":
 		return s.getAccountInfo(ctx, req.Address)
 	default:
