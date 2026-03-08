@@ -5,8 +5,8 @@
 An autonomous AI agent that interacts with the Solana blockchain. Built in Go using [langchaingo](https://tmc.github.io/langchaingo/docs/) with a user-configured LLM as the reasoning engine (Google, OpenAI, or Anthropic). The agent runs in a continuous loop, coordinating a suite of user-installed agentic tools to accomplish user-defined goals. If a goal cannot be accomplished with available tools, the agent reports this rather than hallucinating actions.
 
 ![Solai Architecture diagram](https://res.cloudinary.com/melodyogonna/image/upload/v1773001206/solai-architecture_cqawjr.png)
+_Original architecture diagram. Some details have changed in the implementation but the core vision is the same_
 
-**Original architecture diagram. Some details have changed in the implementation but the core vision is the same**
 ---
 
 ## Core Design Principles
