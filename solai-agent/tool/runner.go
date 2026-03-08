@@ -108,6 +108,22 @@ func buildBwrapArgs(policy SandboxPolicy, toolDir, executable string) []string {
 
 	if policy.ShareNet {
 		args = append(args, "--share-net")
+
+		// Bind essential DNS/TLS files so the tool can make network calls.
+		// These are the same files bound in the agent sandbox; inside a nested
+		// sandbox they are available at the same paths.
+		for _, p := range []string{
+			"/etc/resolv.conf",
+			"/etc/nsswitch.conf",
+			"/etc/ssl/certs",
+			"/etc/ca-certificates.conf",
+			"/etc/ca-certificates",
+			"/etc/pki/tls/certs",
+		} {
+			if _, err := os.Stat(p); err == nil {
+				args = append(args, "--ro-bind", p, p)
+			}
+		}
 	}
 
 	for _, bind := range policy.FSBinds {
