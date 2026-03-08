@@ -59,11 +59,10 @@ buildCyclePrompt()   [rebuilt every cycle]
 runCycle()  [OneShotAgent, max 10 iterations, exponential retry up to 3×]
   └─ ReAct: Reason → pick subagent → formulate prompt → Act → Observe result → repeat
   └─ Each "Act" spawns a subagent process:
-       writes ToolInput (type=input, overview, tasks, available_capabilities) to stdin
-       runs bidirectional request/response loop:
-         ← tool may write {"type":"request",...} for capability actions
-         → coordinator dispatches to Regular capability, writes {"type":"response",...}
-       reads final {"type":"success"|"error",...} from stdout
+       allocates temp IPC dir; writes input.json (prompt + payload map, with auto-injected values merged in)
+       appends Requestable Capabilities section to tool prompt so inner LLM can compose capability requests
+       runs tool; on "request" output: coordinator LLM reads instruction and acts accordingly (typically calls capability, re-invokes tool with result in payload)
+       reads final {"type":"success"|"error",...} from output.json
   └─ On transient error (e.g. LLM rate limit): retry with 2s→30s exponential backoff
   └─ On ErrNotFinished: log warning, no retry, continue to next cycle
   └─ On cycle_timeout: log warning, continue to next cycle
@@ -94,41 +93,39 @@ Agentic tools are standalone executables (any language) distributed as GitHub re
 
 ### IPC protocol
 
-The coordinator communicates with each subagent via **bidirectional** stdin/stdout JSON. All messages carry a `type` field so each side can distinguish them without additional framing. The tool process lifetime is one invocation — it receives a prompt, runs its internal agent loop, optionally requests coordinator capabilities, writes its final result, and exits.
+The coordinator communicates with each subagent via **file-based JSON IPC**. Before spawning the tool, the coordinator allocates a temporary directory (`$SOLAI_IPC_DIR`) and writes `input.json` there. The tool reads `$SOLAI_IPC_DIR/input.json` on startup, does its work, writes `$SOLAI_IPC_DIR/output.json`, and exits. The coordinator reads the output after the process terminates.
 
-**Initial input** (coordinator → subagent, written to stdin at startup):
+Inside the sandbox `$SOLAI_IPC_DIR` is bind-mounted at `/run/solai`; outside it is the host temp path.
+
+**`input.json`** (coordinator → subagent):
 ```json
 {
-  "type": "input",
-  "overview": "One sentence describing the objective.",
-  "tasks": ["Step 1", "Step 2", "Step 3"],
-  "available_capabilities": "## Capability Requests\n..."
+  "prompt": "One sentence describing the objective.",
+  "payload": {"wallet_address": "ABC...XYZ"}
 }
 ```
 
-`available_capabilities` is a generated Markdown block documenting every `Regular` capability that has a non-empty `ToolRequestDescription`. It describes the request/response protocol and the available actions for each capability. Empty string when no such capabilities are registered.
+`prompt` is always present and describes what to do. `payload` is a flat `map[string]string` carrying named values the tool may need (e.g. `wallet_address`, `signed_transaction`). Entries declared in the manifest with a `source` field are auto-injected by the coordinator at load time; others are supplied by the coordinator LLM on subsequent invocations when fulfilling a capability request.
 
-**Final output** (subagent → coordinator, written to stdout):
+The coordinator also appends a `## Requestable Capabilities` section to every tool's `prompt` describing which `Regular` capabilities the inner tool LLM may request and the exact JSON format for doing so. The inner LLM generates these requests dynamically — no logic is hardcoded in tool binaries.
+
+**`output.json`** (subagent → coordinator):
 ```json
-{ "type": "success", "output": <any JSON value> }
-{ "type": "error",   "output": "human-readable error string" }
+{ "type": "success", "payload": <any JSON value> }
+{ "type": "error",   "payload": "human-readable error string" }
+{ "type": "request", "payload": { "capability": "<name>", "action": "<action>", "input": "<value>", "instruction": "<natural language for the coordinator>" } }
 ```
 
-Errors are surfaced as strings so the coordinator observes them as Observations in its ReAct loop and can adapt (retry with different input, try a different tool, or report the failure).
+`success` and `error` are terminal — the coordinator reads them and returns the result to its ReAct loop. `request` is a capability request: the tool writes it and exits immediately (no blocking). The coordinator LLM reads the `instruction` field (natural language composed by the inner tool LLM) and follows it — the instruction may say to re-invoke the tool with the result in `payload`, call another capability first, or anything else. No re-invocation logic is hardcoded in infrastructure.
 
-**Capability request** (subagent → coordinator, mid-execution):
-```json
-{ "type": "request", "capability": "<name>", "action": "<action>", "input": "<value>" }
-```
+**Capability request / re-invocation flow:**
 
-After writing a request the tool blocks reading stdin. The coordinator dispatches the request to the named `Regular` capability and writes back:
+When the coordinator observes a `request` output:
+1. Calls the named capability with the specified `action` and `input`.
+2. Follows the `instruction` — typically: re-invokes the same tool with a new `input.json` where `payload` contains the capability result under the appropriate key.
+3. The tool's response to the re-invocation is the final result for this step.
 
-```json
-{ "type": "response", "output": "<value>" }
-{ "type": "response", "error":  "human-readable error string" }
-```
-
-Only `Regular` capabilities are accessible this way — `Core` and `Internal` capabilities are silently rejected with an error response. This lets tools perform privileged operations (e.g. signing a transaction with the wallet) without receiving secrets directly.
+Only `Regular` capabilities are requestable this way — `Core` and `Internal` capabilities are not accessible to tools.
 
 ### Tool sandbox (nested bwrap)
 
@@ -152,6 +149,10 @@ bwrap --unshare-all
   "version": "1.0.0",
   "executable": "./bin/<tool-name>",
   "required_capabilities": ["network-manager"],
+  "payloads": [
+    {"name": "wallet_address",     "description": "Solana wallet public key", "source": "wallet"},
+    {"name": "signed_transaction", "description": "Base64-encoded signed Solana transaction"}
+  ],
   "env": [
     { "name": "SOME_API_KEY", "sensitive": true,  "required": true  },
     { "name": "SOME_BASE_URL", "sensitive": false, "required": false }
@@ -165,6 +166,11 @@ bwrap --unshare-all
   }
 }
 ```
+
+`payloads` declares named data the tool expects in `input.json`'s `payload` map. Each entry has:
+- `name`: the key in the `payload` map
+- `description`: shown to the coordinator LLM as part of the tool's description (so it knows what to supply on re-invocation)
+- `source` (optional): a capability name — if set, the coordinator resolves the value automatically at load time by calling that capability (e.g. `"wallet"` → wallet address). No LLM involvement for sourced entries.
 
 `llm_options` is required for any tool that uses an internal LLM agent (which is the expected pattern). The coordinator resolves credentials from `config.providers` and injects `SOLAI_LLM_PROVIDER`, `SOLAI_LLM_MODEL`, and `SOLAI_LLM_API_KEY` into the subagent's environment. Tools that are purely deterministic (no reasoning required) may omit `llm_options`.
 
@@ -220,7 +226,7 @@ Capabilities with an empty `Description()` (e.g. `network-manager`) are excluded
 | `system-manager` | Core | Owns tool loading, LLM provider logging, cleanup jobs, sandbox extraction |
 | `wallet` | Regular | Derives ed25519 keypair from BIP39 seed; provides `address` and `sign` actions requestable by tools; coordinator can also call it directly |
 | `network-manager` | Regular | Grants `--share-net` to tool sandboxes that declare it; no runtime request actions |
-| `solana` | Internal | Solana RPC access (balance, transfer, blockhash, send_transaction, account_info); coordinator LLM only — tools use `wallet` to sign, then pass the transaction to the coordinator |
+| `solana` | Regular | Solana RPC access (balance, transfer, blockhash, send_transaction, account_info); callable by the coordinator LLM directly, and requestable by agentic tools via the capability request protocol (e.g. for transaction signing and submission) |
 | `memory` | Internal | Two-layer cross-cycle state: (a) `ConversationWindowBuffer` (last 3 cycles, automatic via langchaingo); (b) structured plan/observation/task store callable by coordinator LLM |
 
 ### Planned capabilities
@@ -295,5 +301,4 @@ Stored in `~/.solai/config.json`. Managed via `solai config set/get/list`.
 |---|---|
 | File manager capability | `FSBinds` field exists in `SandboxPolicy`; no capability wires it up yet |
 | Web UI | Planned long-term; listed as an Internal capability |
-| Signal-based IPC | Original design used file directories + signal channel; simplified to direct stdin/stdout. May revisit for long-running tools |
 | LLM env vars in sandboxed agent | Provider keys from `config.providers` are available to tools but not currently forwarded as env vars into the outer agent sandbox itself |
