@@ -77,9 +77,10 @@ Each cycle prompt lists tools under two sections:
 
 **Built-in Capabilities** — use the JSON input format specified in each tool's description.
 
-# AI! improve this part about agentic tools to be more comprehensible to an LLM, don't touch the list part
-**Agentic Tools** — these run their own internal AI. Pass a json format specified like the following example: {"prompt": "Prompt for AI", "payload": <Optional payload object passed on accepted non-autoinjected payloads in the tools's description>}, the prompt should always be a plain-language description
-of the task (e.g. "Get the price of SOL and JUP" or "Swap 0.1 SOL for USDC"). The payload is optional, and should only be passed if the agentic tool's description lists a payload is isn't marked as "auto injected".
+**Agentic Tools** — these are independent sub-agents. You must invoke them with a JSON object:
+`{"prompt": "Describe what you want the tool to do in plain English", "payload": { ... }}`
+- `prompt`: Required. A clear, natural language instruction (e.g., "Check the price of SOL" or "Swap 0.1 SOL for USDC").
+- `payload`: Optional. Only include this if the tool description explicitly requests a specific payload field that is NOT marked as "auto-injected".
 - Read tool output carefully before deciding the next action.
 - If a tool returns `Tool error: ...`, treat it as an Observation and adapt accordingly.
 - If a tool returns `Tool infrastructure error: ...`, the tool cannot run — report it.
